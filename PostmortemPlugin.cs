@@ -646,6 +646,11 @@ public partial class PostmortemPlugin : BasePlugin
     {
         if (player is null || !player.IsValid || player.IsBot) return HookResult.Continue;
         var message = info.GetArg(1);
+        if (string.IsNullOrEmpty(message)) return HookResult.Continue;
+        // Chat-command prefixes are routed by CSSharp's command dispatcher —
+        // !fk already goes through OnCommandFk. Skip keyword scanning so a
+        // user typing !fk doesn't double-trigger.
+        if (message[0] is '!' or '/' or '.') return HookResult.Continue;
         if (!IsFreekillKeyword(message)) return HookResult.Continue;
         HandleFkComplaint(player, replyToCommand: null);
         return HookResult.Continue;
