@@ -1,0 +1,81 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Optional local override. See postmortem.local.props (gitignored) to build straight into
+    a live server's plugins folder. Without it, NuGet package is used (CI-friendly).
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)postmortem.local.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)postmortem.local.props')" />
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Postmortem</RootNamespace>
+    <AssemblyName>Postmortem</AssemblyName>
+
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- Strip absolute build paths from the shipped DLL. The C# compiler
+         embeds source + PDB paths for debugger symbol lookup; without these
+         settings they leak the local workspace layout. `embedded` puts PDB
+         content inside the DLL (no external .pdb, no path reference).
+         `PathMap` rewrites any remaining absolute source refs. -->
+    <DebugType>embedded</DebugType>
+    <PathMap>$(MSBuildThisFileDirectory)..$([System.IO.Path]::DirectorySeparatorChar)=/_/</PathMap>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(CsSharpInstall)' != '' ">
+    <OutputPath>$(CsSharpInstall)/plugins/Postmortem/</OutputPath>
+  </PropertyGroup>
+
+  <!-- menn-utils is vendored as a sibling csproj under ./menn-utils/. Without
+       these excludes, the SDK-default <Compile Include="**\*.cs"> glob pulls
+       its sources into Postmortem as well, and CS0436 fires because the types
+       are compiled twice (once in menn-utils.dll, once in Postmortem.dll). -->
+  <ItemGroup>
+    <Compile Remove="menn-utils\**" />
+    <None Remove="menn-utils\**" />
+    <EmbeddedResource Remove="menn-utils\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="menn-utils\menn-utils.csproj" />
+  </ItemGroup>
+
+  <!-- CSSharp reads translations from plugins/<Name>/lang/<code>.json -->
+  <ItemGroup>
+    <None Update="lang\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(CsSharpInstall)' != '' ">
+    <Reference Include="CounterStrikeSharp.API">
+      <HintPath>$(CsSharpInstall)/api/CounterStrikeSharp.API.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions">
+      <HintPath>$(CsSharpInstall)/api/Microsoft.Extensions.Logging.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.Localization.Abstractions">
+      <HintPath>$(CsSharpInstall)/api/Microsoft.Extensions.Localization.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(CsSharpInstall)' == '' ">
+    <!-- ExcludeAssets="runtime" on all three: the server already ships
+         CSSharp.API.dll and its framework deps under addons/.../api/; copying
+         them into plugins/Postmortem/ would bloat the bundle and risk version
+         drift against the live server. Matches the local-deploy path, which
+         uses HintPath+Private=false for the same reason. -->
+    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.*" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Extensions.Localization.Abstractions" Version="8.0.3" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>

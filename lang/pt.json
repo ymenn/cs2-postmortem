@@ -1,0 +1,42 @@
+{
+  "pm.res.bad_count": "contagem tem de ser inteiro positivo",
+  "pm.res.bad_where": "localização tem de ser 'spawn' (padrão) ou 'death'",
+  "pm.res.empty": "Não há mortos para ressuscitar",
+  "pm.res.partial": "Ressuscitei 0/{0} — todos vivos ou desconectados",
+  "pm.res.ok": "Ressuscitei {0}/{1}: {2}",
+
+  "pm.ago.just_now": "agora mesmo",
+  "pm.ago.seconds": "há {0}s",
+  "pm.ago.minutes": "há {0}m",
+  "pm.ago.hours": "há {0}h",
+
+  "pm.deaths.empty": "Sem mortes recentes",
+  "pm.deaths.header": "{0} morte(s) recente(s):",
+  "pm.deaths.row": "  #{0} ({1}) {2}",
+  "pm.deaths.row_kill": "  #{0} ({1}) {2} — morto por {3}",
+  "pm.deaths.row_suicide": "  #{0} ({1}) {2} — suicídio",
+
+  "pm.events.empty": "Sem mortes recentes",
+  "pm.events.header": "{0} evento(s) recente(s), gap<={1}s:",
+  "pm.events.row_one": "  #{0} ({1}) 1 morte: {2}",
+  "pm.events.row_many": "  #{0} ({1}) {2} mortes em {3}s: {4}",
+
+  "pm.event.bad_id": "id do evento tem de ser inteiro positivo",
+  "pm.event.none": "Sem evento #{0}",
+
+  "pm.resevent.partial": "Ressuscitei 0/{0} do evento #{1} — todos vivos ou desconectados",
+  "pm.resevent.ok": "Ressuscitei {0}/{1} do evento #{2}: {3}",
+
+  "pm.replay.no_data": "Sem dados de replay para a morte #{0} (gravação desligada ou sampler ainda não tinha frames).",
+  "pm.replay.no_id": "Sem morte #{0}",
+  "pm.replay.no_name_match": "Nenhuma morte recente corresponde a \"{0}\"",
+  "pm.replay.started": "A reproduzir #{0}: morte de {1} (janela de {2}s)",
+  "pm.replay.killshot": "{0} matou {1} com {2}",
+
+  "pm.replaystop.none": "Sem replay ativo",
+  "pm.replaystop.ok": "Replay #{0} cancelado",
+
+  "pm.recording.bad_arg": "uso: !pmrecording [on|off|toggle]",
+  "pm.recording.on": "gravação: ON",
+  "pm.recording.off": "gravação: OFF"
+}

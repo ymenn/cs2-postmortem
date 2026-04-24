@@ -1,0 +1,42 @@
+{
+  "pm.res.bad_count": "count must be a positive integer",
+  "pm.res.bad_where": "location must be 'spawn' (default) or 'death'",
+  "pm.res.empty": "No dead players to respawn",
+  "pm.res.partial": "Respawned 0/{0} — all alive or disconnected",
+  "pm.res.ok": "Respawned {0}/{1}: {2}",
+
+  "pm.ago.just_now": "just now",
+  "pm.ago.seconds": "{0}s ago",
+  "pm.ago.minutes": "{0}m ago",
+  "pm.ago.hours": "{0}h ago",
+
+  "pm.deaths.empty": "No recent deaths",
+  "pm.deaths.header": "{0} recent death(s):",
+  "pm.deaths.row": "  #{0} ({1}) {2}",
+  "pm.deaths.row_kill": "  #{0} ({1}) {2} — killed by {3}",
+  "pm.deaths.row_suicide": "  #{0} ({1}) {2} — suicide",
+
+  "pm.events.empty": "No recent deaths",
+  "pm.events.header": "{0} recent event(s), gap<={1}s:",
+  "pm.events.row_one": "  #{0} ({1}) 1 death: {2}",
+  "pm.events.row_many": "  #{0} ({1}) {2} deaths in {3}s: {4}",
+
+  "pm.event.bad_id": "event id must be a positive integer",
+  "pm.event.none": "No event #{0}",
+
+  "pm.resevent.partial": "Respawned 0/{0} from event #{1} — all alive or disconnected",
+  "pm.resevent.ok": "Respawned {0}/{1} from event #{2}: {3}",
+
+  "pm.replay.no_data": "No replay data for death #{0} (recording was off or sampler hadn't captured frames yet).",
+  "pm.replay.no_id": "No death #{0}",
+  "pm.replay.no_name_match": "No recent death matches \"{0}\"",
+  "pm.replay.started": "Replaying #{0}: {1}'s death ({2}s window)",
+  "pm.replay.killshot": "{0} killed {1} with {2}",
+
+  "pm.replaystop.none": "No active replay",
+  "pm.replaystop.ok": "Replay #{0} cancelled",
+
+  "pm.recording.bad_arg": "usage: !pmrecording [on|off|toggle]",
+  "pm.recording.on": "recording: ON",
+  "pm.recording.off": "recording: OFF"
+}

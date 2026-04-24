@@ -1,0 +1,26 @@
+# Build artifacts
+bin/
+obj/
+*.dll
+*.pdb
+*.deps.json
+
+# Per-developer deploy target (CsSharpInstall path) — see README § Building
+*.local.props
+
+# IDE / editor
+.vs/
+.idea/
+*.user
+*.DotSettings.user
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# dotnet tool state
+.config/
+
+# Logs
+*.log

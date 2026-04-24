@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Public helper library for CounterStrikeSharp plugins. Intentionally generic:
+    nothing community-specific here, nothing another CS2 community would be
+    surprised to find if they decompiled a plugin that references this
+    assembly. `Menn.*` namespace for collision safety (someone else's generic
+    `cssharp-utils` would clash otherwise).
+
+    Plugins that ship externally reference menn-utils only.
+
+    Contains:
+      PlayerCache     — slot-indexed player cache with CSSharp lifecycle wiring
+      PerfTracker     — per-op latency percentiles for hot-path diagnostics
+      TargetResolver  — admin-command target parser (SteamID64 / #slot / name)
+  -->
+
+  <Import Project="$(MSBuildThisFileDirectory)menn-utils.local.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)menn-utils.local.props')" />
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Menn.Utils</RootNamespace>
+    <AssemblyName>menn-utils</AssemblyName>
+
+    <!-- Strip absolute build paths from the shipped DLL; see Postmortem.csproj. -->
+    <DebugType>embedded</DebugType>
+    <PathMap>$(MSBuildThisFileDirectory)..$([System.IO.Path]::DirectorySeparatorChar)=/_/</PathMap>
+  </PropertyGroup>
+
+  <ItemGroup Condition=" '$(CsSharpInstall)' != '' ">
+    <Reference Include="CounterStrikeSharp.API">
+      <HintPath>$(CsSharpInstall)/api/CounterStrikeSharp.API.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions">
+      <HintPath>$(CsSharpInstall)/api/Microsoft.Extensions.Logging.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(CsSharpInstall)' == '' ">
+    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.*">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>
