@@ -32,11 +32,20 @@
   "pm.replay.no_name_match": "No recent death matches \"{0}\"",
   "pm.replay.started": "Replaying #{0}: {1}'s death ({2}s window)",
   "pm.replay.killshot": "{0} killed {1} with {2}",
+  "pm.replay.fired": "{0} fired {1}",
+  "pm.replay.threw": "{0} threw {1}",
+  "pm.replay.swung_knife": "{0} swung their knife",
 
   "pm.replaystop.none": "No active replay",
   "pm.replaystop.ok": "Replay #{0} cancelled",
 
   "pm.recording.bad_arg": "usage: !pmrecording [on|off|toggle]",
   "pm.recording.on": "recording: ON",
-  "pm.recording.off": "recording: OFF"
+  "pm.recording.off": "recording: OFF",
+
+  "pm.fk.no_death": "You haven't died recently",
+  "pm.fk.cooldown": "Wait {0}s before complaining again",
+  "pm.fk.thanks": "Staff notified ({0})",
+  "pm.fk.alert_kill": "⚠ freekill complaint from {0} (killed by {1}) — !pmr {2}",
+  "pm.fk.alert_no_killer": "⚠ freekill complaint from {0} — !pmr {1}"
 }

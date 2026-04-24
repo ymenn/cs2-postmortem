@@ -91,6 +91,12 @@ All commands are `@css/generic`.
 | `!pmstats` | Storage footprint + sampler counters (deaths/cap, live buffers, memory, sampler tick count, pool stats). |
 | `!pmrecording [on/off/toggle]` | Toggle `pm_replay_enabled` live. |
 
+### Anyone (no admin flag required)
+
+| Command | Effect |
+|---|---|
+| `!fk` | Flag the caller's most recent death as a freekill; staff (`@css/generic`) get a chat alert with the exact `!pmr #id` command. Also triggered when a player types `fk` / `freekill` as a standalone word in chat. Per-caller cooldown (`pm_fk_cooldown_seconds`, default 30s). |
+
 ### Debug (`@css/root`)
 
 | Command | Effect |
@@ -146,6 +152,7 @@ public record RespawnPoint(Vector Position, QAngle Angles);
 | `pm_max_deaths_stored` | 100 | Safety cap on DeathStack depth. FIFO eviction + log warning when exceeded. Range 32–2000. |
 | `pm_replay_linger_seconds` | 5.0 | Seconds replay entities stay on screen after the last frame plays. Range 0–30. |
 | `pm_chat_prefix` | `pm` | Chat-line tag, wrapped in `[ ]` on output (`"pm"` → `[pm]`). |
+| `pm_fk_cooldown_seconds` | 30.0 | Minimum seconds between `!fk` complaints per player (anti-spam). Range 0–600. |
 
 ### 4.2 Planned (JSON)
 

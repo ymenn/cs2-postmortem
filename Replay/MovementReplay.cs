@@ -25,6 +25,10 @@ public sealed class MovementReplay
 
     private readonly ILogger _logger;
     private readonly Func<string, string, string, string> _formatKillLine;
+    // Formatter for per-action chat lines ("T fired {weapon}", "T threw
+    // {weapon}", "T swung a knife"). Called from AdvanceMember when we cross
+    // an event boundary and the weapon differs from the last announced one.
+    private readonly Func<string, string, string>? _formatShotLine;
     private readonly List<MemberChannel> _channels;
     private readonly DateTime _startedAt;
     private int _frameIndex;
@@ -48,6 +52,12 @@ public sealed class MovementReplay
         public bool Finished;
         public DateTime? FinishedAt;         // used for linger window
         public bool Despawned;
+        // Event cursor + de-dupe state for T-action chat lines. Events are
+        // timestamped by seconds-since-round-start on the same timeline as
+        // MovementFrame.TimeSinceRoundStart. We walk the cursor forward each
+        // tick and emit a chat line when the T's weapon switches.
+        public int NextEventIdx;
+        public string? LastAnnouncedWeapon;
     }
 
     public MovementReplay(
@@ -55,11 +65,13 @@ public sealed class MovementReplay
         IReadOnlyList<DeathEntry> members,
         ILogger logger,
         Func<string, string, string, string> formatKillLine,
-        Func<float> lingerSeconds)
+        Func<float> lingerSeconds,
+        Func<string, string, string>? formatShotLine = null)
     {
         EventId = eventId;
         _logger = logger;
         _formatKillLine = formatKillLine;
+        _formatShotLine = formatShotLine;
         _lingerSeconds = lingerSeconds;
         _channels = new List<MemberChannel>(members.Count);
         _startedAt = DateTime.UtcNow;
@@ -215,9 +227,10 @@ public sealed class MovementReplay
         if (!anyAlive) IsPlaying = false;
     }
 
-    private static void AdvanceMember(MemberChannel ch, int frameIdx)
+    private void AdvanceMember(MemberChannel ch, int frameIdx)
     {
         var frame = ch.Frames[frameIdx];
+        MaybeAnnounceVictimActions(ch, frame.TimeSinceRoundStart);
         var ghost = ch.Ghost;
         if (ghost is null || !ghost.IsValid) return;
 
@@ -262,6 +275,32 @@ public sealed class MovementReplay
             var shotEnd = RayEnd(eyeStart, frame.ShotDirection, 200f);
             var shotBeam = BeamHelpers.CreateBeamBetweenPoints(shotStart, shotEnd, Color.Red, 0.3f);
             if (shotBeam is not null) ch.ShotBeams.Add(shotBeam);
+        }
+    }
+
+    // Walks ch.NextEventIdx forward over any ShotFired events that happened
+    // at-or-before the current replay frame's timestamp. Emits one chat line
+    // when the weapon differs from the last announced one (so sprays and
+    // burst fire don't spam). Melee swings and grenade throws also come
+    // through as ShotFired (the recorder logs them all); formatting branches
+    // in the plugin-level formatter by weapon-name category.
+    private void MaybeAnnounceVictimActions(MemberChannel ch, float frameAt)
+    {
+        if (_formatShotLine is null) return;
+        var events = ch.Entry.Events;
+        if (events is null) return;
+
+        while (ch.NextEventIdx < events.Count && events[ch.NextEventIdx].At <= frameAt)
+        {
+            if (events[ch.NextEventIdx] is ShotFired sf)
+            {
+                if (!string.Equals(sf.Weapon, ch.LastAnnouncedWeapon, StringComparison.Ordinal))
+                {
+                    Server.PrintToChatAll(_formatShotLine(ch.Entry.VictimName, sf.Weapon));
+                    ch.LastAnnouncedWeapon = sf.Weapon;
+                }
+            }
+            ch.NextEventIdx++;
         }
     }
 

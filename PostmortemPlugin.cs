@@ -19,6 +19,8 @@ namespace Postmortem;
 // !pmreplaystop           — cancel active replay.
 // !pmevents               — list death-events (grouped for mass-respawn flow).
 // !pmresevent <id>        — respawn everyone in event #id.
+// !fk                     — complain about being freekilled; staff get a
+//                           chat line with the exact !pmr command to review.
 // !pmstats                — storage footprint + sampler counters.
 // !pmrecording [on/off/toggle] — friendly toggle for pm_replay_enabled.
 // !pmstack                — debug, @css/root.
@@ -72,9 +74,17 @@ public partial class PostmortemPlugin : BasePlugin
             "Seconds to keep replay entities on screen after the last frame plays.",
             5.0f, ConVarFlags.FCVAR_NONE, new RangeValidator<float>(0.0f, 30.0f));
 
+    public readonly FakeConVar<float> CvFkCooldownSeconds =
+        new("pm_fk_cooldown_seconds",
+            "Minimum seconds between !fk complaints per player (anti-spam).",
+            30.0f, ConVarFlags.FCVAR_NONE, new RangeValidator<float>(0.0f, 600.0f));
+
     private readonly DeathStack _stack = new();
     private readonly StringIntern _intern = new();
     private readonly PerfTracker _perf = new();
+    // Per-slot last-!fk timestamp for cooldown enforcement. Cleared on
+    // disconnect (player slot can be recycled).
+    private readonly Dictionary<int, DateTime> _lastFkAt = new();
     private PlayerCache _cache = default!;
     private MovementSampler _sampler = default!;
     private EventRecorder _recorder = default!;
@@ -109,7 +119,11 @@ public partial class PostmortemPlugin : BasePlugin
         RegisterEventHandler<EventPlayerDisconnect>((@event, _) =>
         {
             var c = @event.Userid;
-            if (c is not null && c.IsValid) _stack.Remove(c.Slot);
+            if (c is not null && c.IsValid)
+            {
+                _stack.Remove(c.Slot);
+                _lastFkAt.Remove(c.Slot);
+            }
             return HookResult.Continue;
         });
 
@@ -118,6 +132,15 @@ public partial class PostmortemPlugin : BasePlugin
             _stack.Clear();
             StopActiveReplay(reason: "map_start");
         });
+
+        // Freekill-keyword chat listener. AddCommandListener on say/say_team
+        // runs Pre, so we observe the raw message; if the player drops "fk"
+        // or "freekill" as a standalone word, route through the same flow as
+        // !fk (cooldown + most-recent-death lookup + admin alert). Always
+        // returns Continue so we never suppress the actual chat line — the
+        // cooldown is what keeps staff chat quiet when the player repeats.
+        AddCommandListener("say", OnChatSay, HookMode.Pre);
+        AddCommandListener("say_team", OnChatSay, HookMode.Pre);
     }
 
     public override void Unload(bool hotReload)
@@ -502,7 +525,8 @@ public partial class PostmortemPlugin : BasePlugin
         var members = new[] { entry };
         StopActiveReplay(reason: "new_replay");
         _activeReplay = new MovementReplay(id, members, Logger, FormatReplayKillLine,
-            lingerSeconds: () => CvReplayLinger.Value);
+            lingerSeconds: () => CvReplayLinger.Value,
+            formatShotLine: FormatReplayShotLine);
         var windowSec = MaxWindowSeconds(members);
         Reply(caller, info, ChatColors.Green,
             Localizer["pm.replay.started", id, entry.VictimName, windowSec.ToString("F1")]);
@@ -529,6 +553,118 @@ public partial class PostmortemPlugin : BasePlugin
         return false;
     }
 
+    [ConsoleCommand("css_fk", "Flag the caller's most recent death as a freekill; staff get the replay command in chat.")]
+    [CommandHelper(minArgs: 0, whoCanExecute: CommandUsage.CLIENT_ONLY)]
+    public void OnCommandFk(CCSPlayerController? caller, CommandInfo info)
+    {
+        if (caller is null || !caller.IsValid) return;
+        HandleFkComplaint(caller, replyToCommand: info);
+    }
+
+    // Shared complaint flow, called from both the !fk command and the chat
+    // listener when a player types "fk" / "freekill" as a standalone word.
+    // `replyToCommand` carries through so an explicit command gets a reply;
+    // when triggered by a chat keyword, the only user-facing feedback is the
+    // staff alert (the player sees their own chat message echo, plus — on
+    // success — the "staff notified" ack printed to them directly).
+    private void HandleFkComplaint(CCSPlayerController caller, CommandInfo? replyToCommand)
+    {
+        // Cooldown — prevents a single player from nuking staff chat.
+        // Applies even when the user didn't type the command (keyword
+        // detection feeds through here too), so repeated "fk fk fk" in chat
+        // results in one alert, not N.
+        if (_lastFkAt.TryGetValue(caller.Slot, out var last))
+        {
+            var elapsed = (DateTime.UtcNow - last).TotalSeconds;
+            var cooldown = CvFkCooldownSeconds.Value;
+            if (elapsed < cooldown)
+            {
+                // Silent cooldown when triggered by chat keyword — players
+                // shouldn't learn they're being filtered. Explicit command
+                // callers do get told.
+                if (replyToCommand is not null)
+                    Reply(caller, replyToCommand, ChatColors.Yellow,
+                        Localizer["pm.fk.cooldown", (int)Math.Ceiling(cooldown - elapsed)]);
+                return;
+            }
+        }
+
+        // Find the caller's most recent death in the stack; its 1-based
+        // newest-first index is exactly what `!pmr <id>` takes.
+        var snap = _stack.SnapshotNewestFirst();
+        var deathId = 0;
+        DeathEntry? entry = null;
+        for (var i = 0; i < snap.Count; i++)
+        {
+            if (snap[i].Slot == caller.Slot)
+            {
+                deathId = i + 1;
+                entry = snap[i];
+                break;
+            }
+        }
+        if (entry is null)
+        {
+            if (replyToCommand is not null)
+                Reply(caller, replyToCommand, ChatColors.Grey, Localizer["pm.fk.no_death"]);
+            return;
+        }
+
+        _lastFkAt[caller.Slot] = DateTime.UtcNow;
+
+        var victimName = caller.PlayerName ?? entry.VictimName;
+        var killer = entry.KillerAt;
+        string alert;
+        if (killer is null || killer.KillerSlot == entry.Slot)
+            alert = Localizer["pm.fk.alert_no_killer", victimName, deathId];
+        else
+            alert = Localizer["pm.fk.alert_kill", victimName, killer.KillerName, deathId];
+        var alertLine = $"{ChatPrefixColored} {ChatColors.Red}{alert}{ChatColors.Default}";
+
+        var notified = 0;
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (p is null || !p.IsValid || p.IsBot) continue;
+            if (!AdminManager.PlayerHasPermissions(p, "@css/generic")) continue;
+            p.PrintToChat(alertLine);
+            notified++;
+        }
+
+        // Always ack the caller — whether they used !fk or just typed it in
+        // chat — so they know the complaint reached staff.
+        if (replyToCommand is not null)
+            Reply(caller, replyToCommand, ChatColors.Green, Localizer["pm.fk.thanks", notified]);
+        else
+            caller.PrintToChat($"{ChatPrefixColored} {ChatColors.Green}{Localizer["pm.fk.thanks", notified]}{ChatColors.Default}");
+
+        Logger.LogInformation(
+            "Postmortem: fk_complaint caller={Caller} deathId={Id} killer={Killer} notifiedAdmins={N}",
+            victimName, deathId, killer?.KillerName ?? "-", notified);
+    }
+
+    private HookResult OnChatSay(CCSPlayerController? player, CommandInfo info)
+    {
+        if (player is null || !player.IsValid || player.IsBot) return HookResult.Continue;
+        var message = info.GetArg(1);
+        if (!IsFreekillKeyword(message)) return HookResult.Continue;
+        HandleFkComplaint(player, replyToCommand: null);
+        return HookResult.Continue;
+    }
+
+    // Token-match against "fk" / "freekill" so "fk that cooked me" fires but
+    // "luck" or "talk" don't. Case-insensitive.
+    private static bool IsFreekillKeyword(string msg)
+    {
+        if (string.IsNullOrWhiteSpace(msg)) return false;
+        foreach (var token in msg.Split(new[] { ' ', '\t', ',', '.', '!', '?' },
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (string.Equals(token, "fk", StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(token, "freekill", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
     [ConsoleCommand("css_pmreplaystop", "Cancel the active replay.")]
     [ConsoleCommand("css_pmrs", "Alias of !pmreplaystop.")]
     [CommandHelper(minArgs: 0, whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
@@ -549,6 +685,34 @@ public partial class PostmortemPlugin : BasePlugin
     // line so replay announcements match the caller's language.
     private string FormatReplayKillLine(string killer, string victim, string weapon)
         => $"{ChatPrefixColored} {Localizer["pm.replay.killshot", killer, victim, weapon]}";
+
+    // Called from MovementReplay when the T switches weapon during playback.
+    // Branches by weapon-name category (melee / grenade / firearm) to pick the
+    // right verb. `weapon` is a CS2 designer name ("weapon_ak47",
+    // "weapon_hegrenade", "weapon_knife_karambit", etc.). Strip the "weapon_"
+    // prefix for display — keeps the chat line readable without a full
+    // humanisation table.
+    private string FormatReplayShotLine(string actor, string weapon)
+    {
+        var label = weapon.StartsWith("weapon_", StringComparison.Ordinal)
+            ? weapon["weapon_".Length..] : weapon;
+        string key;
+        if (IsMeleeWeapon(weapon)) key = "pm.replay.swung_knife";
+        else if (IsGrenade(weapon)) key = "pm.replay.threw";
+        else key = "pm.replay.fired";
+        return $"{ChatPrefixColored} {Localizer[key, actor, label]}";
+    }
+
+    private static bool IsMeleeWeapon(string designerName)
+        => designerName.Contains("knife", StringComparison.Ordinal)
+        || designerName.Contains("bayonet", StringComparison.Ordinal);
+
+    private static bool IsGrenade(string designerName)
+        => designerName.Contains("grenade", StringComparison.Ordinal)
+        || designerName.Contains("molotov", StringComparison.Ordinal)
+        || designerName.Contains("flashbang", StringComparison.Ordinal)
+        || designerName.Contains("decoy", StringComparison.Ordinal)
+        || designerName.Contains("incgrenade", StringComparison.Ordinal);
 
     [ConsoleCommand("css_pmstats", "Storage footprint + sampler counters.")]
     [CommandHelper(minArgs: 0, whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]

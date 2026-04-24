@@ -41,10 +41,16 @@ public sealed class EventRecorder
             if (c is null || !c.IsValid) return HookResult.Continue;
 
             var activeName = c.PlayerPawn?.Value?.WeaponServices?.ActiveWeapon?.Value?.DesignerName;
-            if (IsMeleeLike(activeName)) return HookResult.Continue;
 
-            var look = c.PlayerPawn?.Value?.EyeAngles;
-            if (look is not null) _sampler.TryStampShot(c.Slot, look);
+            // Melee doesn't have a useful shot direction → skip the
+            // per-frame ShotDirection stamp (no red beam). But we still
+            // record the ShotFired event so replay can announce the swing
+            // in chat alongside firearms and grenades.
+            if (!IsMeleeLike(activeName))
+            {
+                var look = c.PlayerPawn?.Value?.EyeAngles;
+                if (look is not null) _sampler.TryStampShot(c.Slot, look);
+            }
             var weapon = _intern.Intern(activeName) ?? "unknown";
             _sampler.AppendEvent(c.Slot, new ShotFired(At(), weapon));
             return HookResult.Continue;
