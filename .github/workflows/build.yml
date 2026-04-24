@@ -8,6 +8,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write  # needed to upsert GitHub Releases
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -33,24 +36,45 @@ jobs:
           mkdir -p stage/Postmortem
           cp -r bin/Release/* stage/Postmortem/
           ls -la stage/Postmortem
+          ls -la stage/Postmortem/lang
+
+      - name: Zip bundle
+        run: |
+          cd stage
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            NAME="Postmortem-${GITHUB_REF_NAME}"
+          else
+            NAME="Postmortem-${GITHUB_SHA::7}"
+          fi
+          echo "ZIP_NAME=${NAME}" >> "$GITHUB_ENV"
+          zip -r "../${NAME}.zip" Postmortem
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Postmortem-${{ github.sha }}
-          path: stage/Postmortem/
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}.zip
           if-no-files-found: error
 
-      # Auto-zip and attach to a GitHub Release when a v* tag is pushed.
-      - name: Package release zip
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          cd stage
-          zip -r "../Postmortem-${GITHUB_REF_NAME}.zip" Postmortem
-
-      - name: Create release
+      # Versioned release on v* tag push.
+      - name: Release (tagged)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: Postmortem-*.zip
+          files: ${{ env.ZIP_NAME }}.zip
           generate_release_notes: true
+
+      # Rolling "latest" release on every main push, replacing the previous
+      # asset. Marked prerelease so it doesn't show as the "Latest release"
+      # on the repo page unless there are no stable tags yet.
+      - name: Release (rolling latest)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: latest (${{ github.sha }})
+          prerelease: true
+          files: ${{ env.ZIP_NAME }}.zip
+          body: |
+            Rolling build of `main` — replaced on every push.
+            Commit: `${{ github.sha }}`
