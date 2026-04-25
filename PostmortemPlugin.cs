@@ -605,23 +605,38 @@ public partial class PostmortemPlugin : BasePlugin
         ReplyLines(caller, info, "events", lines);
     }
 
-    [ConsoleCommand("css_sresevent", "Respawn everyone in event #id.")]
+    [ConsoleCommand("css_sresevent", "Respawn everyone in event #id (default: newest event).")]
     [ConsoleCommand("css_pmresevent", "Alias of !sresevent.")]
     [ConsoleCommand("css_pmre", "Alias of !sresevent.")]
     [CommandHelper(
-        minArgs: 1,
-        usage: "<event_id> [spawn|death]",
+        minArgs: 0,
+        usage: "[event_id] [spawn|death]",
         whoCanExecute: CommandUsage.CLIENT_AND_SERVER
     )]
     [RequiresPermissions("@css/generic")]
     public void OnCommandPmResEvent(CCSPlayerController? caller, CommandInfo info)
     {
-        if (!int.TryParse(info.GetArg(1), out var id) || id <= 0)
+        // Resolve target event: explicit id (numeric arg1), default to newest
+        // event when arg1 is missing or a `[spawn|death]` keyword.
+        int id;
+        var whereArgIndex = 2;
+        if (info.ArgCount >= 2 && int.TryParse(info.GetArg(1), out var parsed) && parsed > 0)
         {
-            Reply(caller, info, ChatColors.Red, Localizer["pm.event.bad_id"]);
-            return;
+            id = parsed;
         }
-        if (!TryParseRespawnWhere(info, 2, out var atDeath, caller))
+        else
+        {
+            var snap = _stack.SnapshotNewestFirst();
+            if (snap.Count == 0)
+            {
+                Reply(caller, info, ChatColors.Grey, Localizer["pm.events.empty"]);
+                return;
+            }
+            id = snap[0].Id;
+            // arg1 may carry a location keyword when no id was given.
+            if (info.ArgCount >= 2) whereArgIndex = 1;
+        }
+        if (!TryParseRespawnWhere(info, whereArgIndex, out var atDeath, caller))
             return;
 
         var popped = _stack.PopGroupContainingId(id, CvGroupGap.Value);
@@ -856,18 +871,32 @@ public partial class PostmortemPlugin : BasePlugin
         );
     }
 
-    [ConsoleCommand("css_replayevent", "Replay all members of event #id together.")]
+    [ConsoleCommand("css_replayevent", "Replay all members of event #id together (default: newest event).")]
     [ConsoleCommand("css_replayev", "Alias of !replayevent.")]
     [ConsoleCommand("css_pmreplayevent", "Alias of !replayevent.")]
     [ConsoleCommand("css_pmrev", "Alias of !replayevent.")]
-    [CommandHelper(minArgs: 1, usage: "<event_id>", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+    [CommandHelper(minArgs: 0, usage: "[event_id]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
     [RequiresPermissions("@css/generic")]
     public void OnCommandPmReplayEvent(CCSPlayerController? caller, CommandInfo info)
     {
-        if (!int.TryParse(info.GetArg(1), out var id) || id <= 0)
+        int id;
+        if (info.ArgCount >= 2)
         {
-            Reply(caller, info, ChatColors.Red, Localizer["pm.event.bad_id"]);
-            return;
+            if (!int.TryParse(info.GetArg(1), out id) || id <= 0)
+            {
+                Reply(caller, info, ChatColors.Red, Localizer["pm.event.bad_id"]);
+                return;
+            }
+        }
+        else
+        {
+            var snap = _stack.SnapshotNewestFirst();
+            if (snap.Count == 0)
+            {
+                Reply(caller, info, ChatColors.Grey, Localizer["pm.events.empty"]);
+                return;
+            }
+            id = snap[0].Id;
         }
         var group = _stack.FindGroupContainingId(id, CvGroupGap.Value);
         if (group.Count == 0)
