@@ -96,18 +96,10 @@ public sealed class PlayerCache
             return HookResult.Continue;
         });
 
-        // Heal-from-event: on hot reload mid-game, OnClientPutInServer /
-        // EventPlayerConnectFull don't re-fire for already-connected players,
-        // and Reconcile via Utilities.GetPlayers() can return empty during
-        // Load (engine timing race). Spawn / Team / Death are still raised by
-        // the engine for those players, so we use them to populate the cache
-        // — without this, the cache stays empty and the sampler never picks
-        // them up, producing frames=0 on every death.
         plugin.RegisterEventHandler<EventPlayerTeam>((@event, _) =>
         {
             var c = @event.Userid;
             if (c is null || !c.IsValid) return HookResult.Continue;
-            if (_slots[c.Slot] is null) AddOrUpdate(c);
             if (_slots[c.Slot] is { } e)
             {
                 e.Team = (CsTeam)@event.Team;
@@ -120,7 +112,6 @@ public sealed class PlayerCache
         {
             var c = @event.Userid;
             if (c is null || !c.IsValid) return HookResult.Continue;
-            if (_slots[c.Slot] is null) AddOrUpdate(c);
             if (_slots[c.Slot] is { } e)
             {
                 e.IsAlive = true;
@@ -133,7 +124,6 @@ public sealed class PlayerCache
         {
             var c = @event.Userid;
             if (c is null || !c.IsValid) return HookResult.Continue;
-            if (_slots[c.Slot] is null) AddOrUpdate(c);
             if (_slots[c.Slot] is { } e)
             {
                 e.IsAlive = false;
