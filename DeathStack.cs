@@ -31,6 +31,12 @@ public enum WeaponTier
 // Id is assigned by DeathStack.Push (stable, monotonic within a round). User
 // types it in commands like `!replay 7` or `!sres #7`. Reset on round_start /
 // map_start so numbers stay small.
+//
+// VictimTeam is captured at death time. The freekill-oriented commands
+// (!sres N, !sresevent, chain alert) filter to Terrorist-only — CT deaths in
+// these flows are typically the freekiller self-slaying as punishment, not
+// victims to revive. Browse + replay commands ignore this field so internal
+// CT incidents stay fully inspectable.
 public sealed record DeathEntry(
     int Slot,
     string VictimName,
@@ -41,7 +47,8 @@ public sealed record DeathEntry(
     Vector? DeathPosition,
     QAngle? DeathAngles,
     WeaponTier VictimTier = WeaponTier.NotArmed,
-    MovementFrame[]? KillerMovementHistory = null)
+    MovementFrame[]? KillerMovementHistory = null,
+    CsTeam VictimTeam = CsTeam.None)
 {
     public int Id { get; init; }
 }
@@ -161,6 +168,40 @@ public sealed class DeathStack
         return popped;
     }
 
+    // Pop the last N T-team deaths, newest-first, leaving any CT entries in
+    // place. Used by `!sres N` so a CT's self-slay-as-punishment doesn't burn
+    // one of the slots the admin asked for. CT entries stay in the stack so
+    // they remain browsable / replayable.
+    public IReadOnlyList<DeathEntry> PopLastNTerrorist(int n)
+    {
+        if (n <= 0 || _order.Count == 0) return Array.Empty<DeathEntry>();
+        var popped = new List<DeathEntry>(n);
+        // Walk newest-first; remove T entries until we have N or hit the
+        // bottom. Removing at index i doesn't affect indices < i, so the
+        // following i-- still points at the correct previous entry.
+        var i = _order.Count - 1;
+        while (i >= 0 && popped.Count < n)
+        {
+            if (_order[i].VictimTeam == CsTeam.Terrorist)
+            {
+                popped.Add(_order[i]);
+                _order.RemoveAt(i);
+            }
+            i--;
+        }
+        return popped;
+    }
+
+    // Newest-first stable id of the most recent T-team death, or null. Used
+    // to default `!sresevent` to the newest *freekill* event (skipping a
+    // trailing CT self-slay).
+    public int? NewestTerroristDeathId()
+    {
+        for (var i = _order.Count - 1; i >= 0; i--)
+            if (_order[i].VictimTeam == CsTeam.Terrorist) return _order[i].Id;
+        return null;
+    }
+
     // Group entries newest-first using chain-based grouping with refreshing
     // gap (read-only, no mutation). Each group is newest-first; groups
     // themselves are newest-first (group[0] = the newest event).
@@ -205,6 +246,36 @@ public sealed class DeathStack
         for (var k = 0; k < take; k++)
             popped[k] = _order[hi - k];
         _order.RemoveRange(lo, take);
+        return popped;
+    }
+
+    // Pop only the T-team members of the chain group containing `id`.
+    // Newest-first. CT members of the same chain stay in the stack so they
+    // remain browsable / replayable — internal CT incidents are rare enough
+    // to handle case-by-case via !sres #id. Returns empty if `id` isn't in
+    // the stack OR the chain has no T victims.
+    public IReadOnlyList<DeathEntry> PopGroupTerroristContainingId(int id, double gapSeconds)
+    {
+        if (_order.Count == 0) return Array.Empty<DeathEntry>();
+        var found = -1;
+        for (var i = 0; i < _order.Count; i++)
+        {
+            if (_order[i].Id == id) { found = i; break; }
+        }
+        if (found < 0) return Array.Empty<DeathEntry>();
+
+        var (lo, hi) = ExpandGroupBounds(found, gapSeconds);
+        var popped = new List<DeathEntry>();
+        // Walk hi → lo (newest first). RemoveAt at index i doesn't affect
+        // indices < i, so we don't need to adjust hi/lo as we go.
+        for (var i = hi; i >= lo; i--)
+        {
+            if (_order[i].VictimTeam == CsTeam.Terrorist)
+            {
+                popped.Add(_order[i]);
+                _order.RemoveAt(i);
+            }
+        }
         return popped;
     }
 

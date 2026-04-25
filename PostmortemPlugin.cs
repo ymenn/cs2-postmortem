@@ -282,7 +282,8 @@ public partial class PostmortemPlugin : BasePlugin
             DeathPosition: deathPos,
             DeathAngles: deathAngles,
             VictimTier: victimTier,
-            KillerMovementHistory: killerFrames
+            KillerMovementHistory: killerFrames,
+            VictimTeam: victim.Team
         );
         var pushed = _stack.Push(entry, CvMaxDeathsStored.Value);
         TrackChainAndScheduleAlert(pushed);
@@ -502,7 +503,10 @@ public partial class PostmortemPlugin : BasePlugin
         }
         else
         {
-            popped = _stack.PopLastN(count);
+            // T-only: a CT slaying themselves as freekill punishment shouldn't
+            // burn one of the N slots the admin asked for. Internal CT
+            // incidents are revived via explicit `!sres #id`.
+            popped = _stack.PopLastNTerrorist(count);
         }
         if (popped.Count == 0)
         {
@@ -617,7 +621,9 @@ public partial class PostmortemPlugin : BasePlugin
     public void OnCommandPmResEvent(CCSPlayerController? caller, CommandInfo info)
     {
         // Resolve target event: explicit id (numeric arg1), default to newest
-        // event when arg1 is missing or a `[spawn|death]` keyword.
+        // T-team event when arg1 is missing or a `[spawn|death]` keyword.
+        // Defaulting to the newest T death (not the absolute newest) skips a
+        // trailing CT self-slay so `!sresevent` lands on the freekill chain.
         int id;
         var whereArgIndex = 2;
         if (info.ArgCount >= 2 && int.TryParse(info.GetArg(1), out var parsed) && parsed > 0)
@@ -626,20 +632,23 @@ public partial class PostmortemPlugin : BasePlugin
         }
         else
         {
-            var snap = _stack.SnapshotNewestFirst();
-            if (snap.Count == 0)
+            var newestT = _stack.NewestTerroristDeathId();
+            if (newestT is null)
             {
                 Reply(caller, info, ChatColors.Grey, Localizer["pm.events.empty"]);
                 return;
             }
-            id = snap[0].Id;
+            id = newestT.Value;
             // arg1 may carry a location keyword when no id was given.
             if (info.ArgCount >= 2) whereArgIndex = 1;
         }
         if (!TryParseRespawnWhere(info, whereArgIndex, out var atDeath, caller))
             return;
 
-        var popped = _stack.PopGroupContainingId(id, CvGroupGap.Value);
+        // Pop only the T members of the chain. CT entries (e.g. the killer
+        // self-slaying) stay in the stack so they remain replayable / can be
+        // revived individually via `!sres #id` if needed.
+        var popped = _stack.PopGroupTerroristContainingId(id, CvGroupGap.Value);
         if (popped.Count == 0)
         {
             Reply(caller, info, ChatColors.Yellow, Localizer["pm.event.none", id]);
@@ -1403,17 +1412,29 @@ public partial class PostmortemPlugin : BasePlugin
 
     // Debounce-style chain tracker. Each death push extends a timer to
     // gap+0.5s; the chain closes when the timer fires without another push.
-    // On close, if the chain grew big enough, alert staff with the replay
-    // command for the event. We re-query the stack at fire time so an admin
-    // who already consumed the event with !sresevent doesn't get a stale
-    // alert.
+    // On close, if enough *T* deaths happened in the chain, alert staff —
+    // CT deaths are typically the freekiller self-slaying, not victims, so
+    // they shouldn't count toward the threshold. We still extend the timer
+    // on CT pushes so a CT death between two T deaths doesn't close the
+    // chain early; we just don't anchor on it. We re-query the stack at fire
+    // time so an admin who already consumed the event with !sresevent
+    // doesn't get a stale alert.
     private void TrackChainAndScheduleAlert(DeathEntry pushed)
     {
         var threshold = CvEventAlertMinDeaths.Value;
         if (threshold <= 0) return;
 
-        _chainCount++;
-        _chainAnchorId = pushed.Id;
+        if (pushed.VictimTeam == CsTeam.Terrorist)
+        {
+            _chainCount++;
+            _chainAnchorId = pushed.Id;
+        }
+        else if (_chainAnchorId is null)
+        {
+            // CT-only chain so far — don't bother with a timer. If a T dies
+            // later, that push will start the chain.
+            return;
+        }
 
         var gap = CvGroupGap.Value;
         _chainTimer?.Kill();
@@ -1434,13 +1455,18 @@ public partial class PostmortemPlugin : BasePlugin
         var threshold = CvEventAlertMinDeaths.Value;
         if (threshold <= 0 || count < threshold) return;
 
-        // Verify the event is still in the stack (admin may have consumed it
-        // via !sresevent before the debounce timer fired).
+        // Re-verify against the stack: the chain may have expanded across CT
+        // deaths (so group.Count > T-count), and an admin may have consumed
+        // some of it via !sresevent before the debounce fired. Count the
+        // T-team members of whatever's still there.
         var group = _stack.FindGroupContainingId(id, CvGroupGap.Value);
-        if (group.Count < threshold) return;
+        var tCount = 0;
+        foreach (var e in group)
+            if (e.VictimTeam == CsTeam.Terrorist) tCount++;
+        if (tCount < threshold) return;
 
         var cmd = $"{ChatColors.LightYellow}!replayevent {id}{ChatColors.Red}";
-        var alert = Localizer["pm.event.alert", group.Count, cmd];
+        var alert = Localizer["pm.event.alert", tCount, cmd];
         var alertLine = $"{ChatPrefixColored} {ChatColors.Red}{alert}{ChatColors.Default}";
         var notified = 0;
         foreach (var p in Utilities.GetPlayers())
@@ -1451,8 +1477,9 @@ public partial class PostmortemPlugin : BasePlugin
             notified++;
         }
         Logger.LogInformation(
-            "Postmortem: chain_alert eventId={Id} size={Size} notifiedAdmins={N}",
+            "Postmortem: chain_alert eventId={Id} tCount={T} groupSize={Size} notifiedAdmins={N}",
             id,
+            tCount,
             group.Count,
             notified
         );
