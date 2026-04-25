@@ -299,11 +299,19 @@ public partial class PostmortemPlugin : BasePlugin
             );
         }
 
+        // victimTeam / attackerTeam land in the log so you can later answer
+        // "why didn't !sres N pick this entry?" or "did the chain alert count
+        // the right deaths?" without re-resolving controllers (which may be
+        // gone by the time anyone reads the log).
+        var attacker = @event.Attacker;
+        var attackerTeam = attacker is not null && attacker.IsValid ? attacker.Team : CsTeam.None;
         Logger.LogInformation(
-            "Postmortem: death_push id={Id} slot={Slot} name={Name} frames={Frames} killerFrames={KFrames} events={Events} killer={Killer} stackCount={Count}",
+            "Postmortem: death_push id={Id} slot={Slot} name={Name} victimTeam={VTeam} attackerTeam={ATeam} frames={Frames} killerFrames={KFrames} events={Events} killer={Killer} stackCount={Count}",
             pushed.Id,
             victim.Slot,
             victimName,
+            victim.Team,
+            attackerTeam,
             frames?.Length ?? 0,
             killerFrames?.Length ?? 0,
             events?.Count ?? 0,
@@ -1081,8 +1089,9 @@ public partial class PostmortemPlugin : BasePlugin
             );
 
         Logger.LogInformation(
-            "Postmortem: fk_complaint caller={Caller} deathId={Id} killer={Killer} notifiedAdmins={N}",
+            "Postmortem: fk_complaint caller={Caller} victimTeam={VTeam} deathId={Id} killer={Killer} notifiedAdmins={N}",
             victimName,
+            entry.VictimTeam,
             deathId,
             killer?.KillerName ?? "-",
             notified
