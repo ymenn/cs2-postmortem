@@ -3,6 +3,17 @@ using Postmortem.Replay;
 
 namespace Postmortem;
 
+// Highest-tier weapon the victim was carrying at death. Drives the replay
+// ghost tint (NotArmed = default model color, Pistol = yellow, Primary = red)
+// so an admin can see at a glance whether the kill was on someone defenseless.
+// Ordered numerically so a "max so far" reduce works.
+public enum WeaponTier
+{
+    NotArmed = 0,
+    Pistol = 1,
+    Primary = 2,
+}
+
 // Per-death record. MovementHistory / Events / KillerAt are null when
 // pm_replay_enabled=false at the time of death. The stack works regardless —
 // callers that want replay data check for null.
@@ -19,7 +30,8 @@ public sealed record DeathEntry(
     List<ReplayEvent>? Events,
     KillerSnapshot? KillerAt,
     Vector? DeathPosition,
-    QAngle? DeathAngles);
+    QAngle? DeathAngles,
+    WeaponTier VictimTier = WeaponTier.NotArmed);
 
 // Round-bounded LIFO of recent deaths.
 //
@@ -84,6 +96,17 @@ public sealed class DeathStack
         for (var i = 0; i < _order.Count; i++)
             snap[i] = _order[_order.Count - 1 - i];
         return snap;
+    }
+
+    // Pop a single entry at the given newest-first index. Used by !pmres
+    // when the caller targeted a specific death by name.
+    public DeathEntry? PopAt(int newestFirstIndex)
+    {
+        if (newestFirstIndex < 0 || newestFirstIndex >= _order.Count) return null;
+        var orderIdx = _order.Count - 1 - newestFirstIndex;
+        var entry = _order[orderIdx];
+        _order.RemoveAt(orderIdx);
+        return entry;
     }
 
     // Pop the last N individual deaths, newest-first. Used by !pmres (no

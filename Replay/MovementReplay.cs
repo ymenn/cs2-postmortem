@@ -243,12 +243,18 @@ public sealed class MovementReplay
         // isn't exposed by CSSharp today, so we can't drive walk/crouch/aim
         // states — the ghost stands, but Teleport below still tracks the
         // captured position/orientation/velocity correctly.
+        // Tint by victim's highest weapon tier — yellow = pistol, red =
+        // primary, default model color = unarmed. Falls back to whatever the
+        // sampler captured (usually white) when the victim was unarmed.
+        var tierRgb = ch.Entry.VictimTier switch
+        {
+            WeaponTier.Primary => (R: (byte)255, G: (byte)80, B: (byte)80),
+            WeaponTier.Pistol => (R: (byte)255, G: (byte)220, B: (byte)80),
+            _ => (frame.ModelRenderColor.R, frame.ModelRenderColor.G, frame.ModelRenderColor.B),
+        };
         ghost.RenderMode = RenderMode_t.kRenderTransAlpha;
-        ghost.Render = Color.FromArgb(
-            (int)(255 * 0.8),
-            frame.ModelRenderColor.R,
-            frame.ModelRenderColor.G,
-            frame.ModelRenderColor.B);
+        ghost.Render = Color.FromArgb((int)(255 * 0.8), tierRgb.R, tierRgb.G, tierRgb.B);
+        Utilities.SetStateChanged(ghost, "CBaseModelEntity", "m_clrRender");
         // Body yaw only — zero pitch/roll so the model stays upright instead
         // of tilting with the view (live players hold upright bodies).
         var bodyYaw = new QAngle(0f, frame.PlayerRotation.Y, 0f);
@@ -268,11 +274,11 @@ public sealed class MovementReplay
         // playback, well under 1% of tick budget).
         TryKill(ch.LookBeam);
         ch.LookBeam = BeamHelpers.CreateBeamBetweenPoints(
-            shotStart, lookEnd, Color.FromArgb(255, 255, 0, 255), 0.3f);
+            shotStart, lookEnd, Color.Lime, 1.0f);
 
         if (frame.ShotDirection is not null)
         {
-            var shotEnd = RayEnd(eyeStart, frame.ShotDirection, 200f);
+            var shotEnd = RayEnd(eyeStart, frame.ShotDirection, 1500f);
             var shotBeam = BeamHelpers.CreateBeamBetweenPoints(shotStart, shotEnd, Color.Red, 0.3f);
             if (shotBeam is not null) ch.ShotBeams.Add(shotBeam);
         }
