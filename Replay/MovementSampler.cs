@@ -140,9 +140,19 @@ public sealed class MovementSampler
     private void OnRoundStart()
     {
         // Clear any stale buffers from the last round — fresh windows per life.
+        // Buffers whose capacity doesn't match the current target (admin
+        // changed pm_replay_window_seconds mid-game) are dropped entirely so
+        // the next SampleOne reallocates them at the new size. Without this,
+        // window-length changes only took effect on map change.
+        var targetCapacity = ComputeRingCapacity();
         for (var i = 0; i < MaxSlots; i++)
         {
-            _buffers[i]?.Clear();
+            var buf = _buffers[i];
+            if (buf is null) continue;
+            if (buf.Capacity != targetCapacity)
+                _buffers[i] = null;
+            else
+                buf.Clear();
             _eventLogs[i]?.Clear();
         }
         ResetTimer();
