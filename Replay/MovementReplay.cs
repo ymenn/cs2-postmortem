@@ -152,18 +152,18 @@ public sealed class MovementReplay
         }
         catch { /* best-effort; older CSSharp may not expose this */ }
         // Let the model's own animgraph drive the pose. Setting
-        // UseAnimGraph=false (yappers pattern) forces manual SetAnimation
-        // calls — which only works if the model still embeds the expected
-        // named sequences. Modern CS2 player models are graph-driven
-        // (animation/graphs/worldmodel/worldmodel.vnmgraph) and carry
-        // almost no raw sequences, so SetAnimation just logs warnings.
-        // With the graph enabled and no control parameters fed, the prop
-        // runs the graph's default state (idle/stand).
+        // UseAnimGraph=false forces manual SetAnimation calls — which only
+        // works if the model still embeds the expected named sequences.
+        // Modern CS2 player models are graph-driven
+        // (animation/graphs/worldmodel/worldmodel.vnmgraph) and carry almost
+        // no raw sequences, so SetAnimation just logs warnings. With the
+        // graph enabled and no control parameters fed, the prop runs the
+        // graph's default state (idle/stand).
         ghost.UseAnimGraph = true;
         ghost.Teleport(ch.Frames[0].Location);
-        // yappers' order — DispatchSpawn before SetModel — produces a benign
-        // "no model name" warning from the engine on first frame. Reversing
-        // it breaks the prop entirely (no visible entity). Left as-is.
+        // DispatchSpawn before SetModel produces a benign "no model name"
+        // warning from the engine on first frame. Reversing it breaks the
+        // prop entirely (no visible entity). Left as-is.
         ghost.DispatchSpawn();
         ghost.SetModel(modelName);
         ch.Ghost = ghost;
@@ -201,10 +201,11 @@ public sealed class MovementReplay
         var km = Utilities.CreateEntityByName<CDynamicProp>("prop_dynamic");
         if (km is null) return;
         km.UseAnimGraph = true;
-        // Position first (no rotation) — same yappers ordering as the T ghost.
-        // Rotation applied after DispatchSpawn+SetModel because prop_dynamic
-        // entities ignore pre-spawn transforms; the T ghost gets re-teleported
-        // every tick from AdvanceMember so the issue doesn't show up there.
+        // Position first (no rotation) — same DispatchSpawn-before-SetModel
+        // ordering as the T ghost. Rotation is applied after
+        // DispatchSpawn+SetModel because prop_dynamic entities ignore
+        // pre-spawn transforms; the T ghost gets re-teleported every tick
+        // from AdvanceMember so the issue doesn't show up there.
         km.Teleport(killer.KillerPosition);
         km.DispatchSpawn();
         km.SetModel(killer.KillerModelName);

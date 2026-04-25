@@ -5,9 +5,9 @@ using CounterStrikeSharp.API.Modules.Utils;
 
 namespace Postmortem.Replay;
 
-// CEnvBeam creation helper — mirrors yappers' BeamHelpers. env_beam is a
-// point-to-point beam entity; Teleport sets start, EndPos sets end, Render
-// sets color, Width/EndWidth set thickness.
+// CEnvBeam creation helper. env_beam is a point-to-point beam entity:
+// Teleport sets start, EndPos sets end, Render sets color, Width/EndWidth
+// set thickness.
 //
 // Killed with AcceptInput("Kill"). Callers manage lifetime.
 public static class BeamHelpers

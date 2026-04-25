@@ -10,7 +10,7 @@ namespace Postmortem.Replay;
 
 // Timer-driven per-player movement sampler.
 //
-// Adaptive-rate table (ticks between samples; yappers-style):
+// Adaptive-rate table (ticks between samples):
 //   alive <= 10  -> every 6 ticks (~10.7 Hz at 64 tick)
 //   alive <= 20  -> 7
 //   alive <= 30  -> 8
