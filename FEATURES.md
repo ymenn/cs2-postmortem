@@ -23,12 +23,14 @@ No external dependencies beyond CSSharp itself.
 ## 2. Respawn — `!sres`, `!sresevent`
 
 `!sres [count|#id|name] [spawn|death]` — one command, four shapes:
-- no arg → newest 1
-- numeric `N` → last N from the stack top (count)
-- `#N` → specific stable id
-- bareword → newest victim-name substring match (case-insensitive)
+- no arg → newest 1 (T-only)
+- numeric `N` → last N **T** deaths from the stack top (count form skips CT entries via `PopLastNTerrorist`)
+- `#N` → specific stable id (any team)
+- bareword → newest victim-name substring match (any team)
 
-`!sresevent [event_id] [spawn|death]` — revive everyone in a chain. Default = newest event. `event_id` is any death-id within the chain; `DeathStack.PopGroupContainingId` walks the chain bounds via the `pm_group_gap_seconds` rule.
+`!sresevent [event_id] [spawn|death]` — revive **T members** of a chain. Default = newest **T** event (`NewestTerroristDeathId` skips a trailing CT self-slay). `event_id` is any death-id within the chain; `DeathStack.PopGroupTerroristContainingId` walks the chain bounds via the `pm_group_gap_seconds` rule and pops only T-team entries — CT entries in the same chain remain in the stack.
+
+**T-only filter on bulk flows.** `!sres N` and `!sresevent` are freekill-response tools: a CT slaying themselves as punishment shouldn't burn one of the N slots, and bulk-reviving a CT during a T rebellion isn't usually intended. Internal CT incidents are rare (fewer CTs) and handled case-by-case via `!sres #id`. Browse + replay paths (`!deaths`, `!devents`, `!replay`, `!replayevent`) ignore the team filter so CT entries stay fully inspectable.
 
 **Default location: death position**, with team-spawn fallback when no position was captured (rare disconnect-race case). Override with trailing `spawn` / `team`. Respawn defers a frame so the engine has time to revive the pawn before teleport.
 
@@ -81,11 +83,13 @@ Triggered by either the `!fk` command or by typing `fk` / `freekill` as a standa
 
 ## 6. Staff chain alert
 
-When a chain closes (no new death within `pm_group_gap_seconds`) and the chain size meets `pm_event_alert_min_deaths` (default 3), staff receive `⚠ N-kill chain just ended — !replayevent <id>` (command portion colored).
+When a chain closes (no new death within `pm_group_gap_seconds`) and the **T**-victim count meets `pm_event_alert_min_deaths` (default 3), staff receive `⚠ N-kill chain just ended — !replayevent <id>` where `N` is the T count and the `id` anchors on a T death.
 
-**Debounce.** Each death push extends the timer to `gap + 0.5s`. The chain stays "open" as long as kills keep landing inside the gap. The alert fires exactly once when the chain closes.
+**T-only counting.** Only T pushes increment the counter and update `_chainAnchorId`; CT pushes still extend the debounce timer (so a mid-chain CT slay doesn't close the chain early) but don't count toward the threshold or anchor the alert. Pure CT chains and T-rebellion CT-only chains never alert. The alert id is always a T death so `!replayevent <id>` lands on a freekill victim.
 
-**Consume-suppression.** At fire time the stack is re-queried via `FindGroupContainingId`. If an admin already consumed the event with `!sresevent` (size dropped below threshold), no alert fires.
+**Debounce.** Each death push (T or CT, once an anchor exists) extends the timer to `gap + 0.5s`. The chain stays "open" as long as kills keep landing inside the gap. The alert fires exactly once when the chain closes.
+
+**Consume-suppression.** At fire time the stack is re-queried via `FindGroupContainingId`; T members in the still-present group are re-counted. If an admin already consumed the event with `!sresevent` (T count dropped below threshold), no alert fires.
 
 Set `pm_event_alert_min_deaths 0` to disable. Reset on round/map/unload.
 
@@ -142,7 +146,7 @@ Round-bounded clearing keeps real-world stacks well below the cap.
 
 | Type | File | Notes |
 |---|---|---|
-| `DeathEntry` | `DeathStack.cs` | `Id` is init-only, stamped by `Push`. `MovementHistory` / `KillerMovementHistory` / `Events` / `KillerAt` are null when sampling was off (or no killer). `DeathPosition` / `DeathAngles` always captured. |
+| `DeathEntry` | `DeathStack.cs` | `Id` is init-only, stamped by `Push`. `MovementHistory` / `KillerMovementHistory` / `Events` / `KillerAt` are null when sampling was off (or no killer). `DeathPosition` / `DeathAngles` always captured. `VictimTeam` is captured at death time (drives the T-only filter on `!sres N`, `!sresevent`, chain alert). |
 | `MovementFrame` | `Replay/MovementFrame.cs` | Reference type, reused in ring slots. `ShotDirection` non-null only on frames where the player fired. |
 | `KillerSnapshot` | `Replay/ReplayEvent.cs` | `KillerSlot == VictimSlot` ⇒ suicide (bot SteamIDs all collide at 0). |
 | `ReplayEvent` (`ShotFired` / `DamageDealt` / `DamageTaken` / `WeaponPickup`) | `Replay/ReplayEvent.cs` | `At` is seconds since round start; same timeline as `MovementFrame.TimeSinceRoundStart`. |

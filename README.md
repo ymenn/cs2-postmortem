@@ -21,10 +21,12 @@ Death `#id`s are stable within a round — they're assigned monotonically at kil
 
 | Command | Aliases | Effect |
 |---|---|---|
-| `!sres [count\|#id\|name] [spawn\|death]` | `!pmres` | Revive last N (default 1), specific death-id, or newest name match. |
-| `!sresevent [event_id] [spawn\|death]` | `!pmresevent`, `!pmre` | Revive everyone in an event (default: newest event). |
+| `!sres [count\|#id\|name] [spawn\|death]` | `!pmres` | Revive last N T deaths (default 1), specific death-id (any team), or newest name match. |
+| `!sresevent [event_id] [spawn\|death]` | `!pmresevent`, `!pmre` | Revive T members of an event (default: newest T event). |
 
 Default respawn location is the captured **death position** (with team-spawn fallback when none was captured). Append `spawn` or `team` to override.
+
+**T-only filter on bulk flows.** `!sres N` and `!sresevent` skip CT entries because these commands target freekill response — a CT slaying themselves as punishment shouldn't burn one of the slots, and bulk-reviving a dead CT during a T rebellion isn't usually wanted. CT entries stay in the stack for `!sres #id`, `!replay`, and `!devents` — internal CT incidents (rare, fewer CTs) are handled case-by-case via explicit id.
 
 ### Replay
 
@@ -46,7 +48,7 @@ Debug (`@css/root`): `css_pmstack`, `css_pm_killbot`, `css_pmperfbench`, `css_pm
 
 ## Staff alerts
 
-When a chain of `pm_event_alert_min_deaths` (default 3) or more deaths closes (no new kill within `pm_group_gap_seconds`), staff receive a chat line with the `!replayevent <id>` command. Suppressed if the event was already consumed via `!sresevent` before the chain closed. Set the threshold to `0` to disable.
+When a chain of `pm_event_alert_min_deaths` (default 3) or more **T** deaths closes (no new kill within `pm_group_gap_seconds`), staff receive a chat line with the `!replayevent <id>` command. CT deaths in the chain extend the debounce timer (so a mid-chain CT slay doesn't close the chain early) but don't count toward the threshold — pure T-rebellion chains and CT-only deaths don't generate alerts. Suppressed if the event was already consumed via `!sresevent` before the chain closed. Set the threshold to `0` to disable.
 
 ## ConVars
 
