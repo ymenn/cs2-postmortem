@@ -1,205 +1,172 @@
 # Postmortem — Feature Inventory
 
-> **Status: replay shipped (2026-04-24).** Movement sampler, death capture, event grouping, and ghost-replay playback all wired up and live-tested. Remaining: location selector (§1.2) and extension mechanism (§3).
-
-Standalone CounterStrikeSharp plugin. Admin tool for dealing with deaths after the fact: respawn the last N dead without needing their names, browse recent death-events, and play back captured movement as ghost props.
+Standalone CounterStrikeSharp plugin. Admin tool for dealing with deaths after the fact: browse recent deaths, respawn one or many at the captured death position, and play back movement (victim **and** killer) as ghost props.
 
 No external dependencies beyond CSSharp itself.
 
 ---
 
-## 1. Core gameplay
+## 1. Death capture
 
-### 1.1 Respawn last N individual deaths — `!pmres [N]`
+`EventPlayerDeath` → `DeathStack.Push(DeathEntry)`. Each death is a fresh entry (no slot dedup — die, get respawned, die again all tracked independently).
 
-`!pmres [N]` → respawn the N most-recently-dead players. **Per-death (no grouping).** `N` defaults to 1. Permission `@css/generic`.
+**Stable IDs.** `DeathStack.Push` stamps a monotonic `Id` on every entry. IDs reset on `EventRoundStart` / `OnMapStart`, but never shift mid-round — popping `#5` leaves `#3` and `#7` unchanged. User commands type the id directly (`!replay 7`, `!sres #7`).
 
-Group-aware respawn lives in `!pmresevent` (§1.4). `pm_group_gap_seconds` no longer controls `!pmres` — it only governs event formation.
+**Stack scope.** Round-bounded. `EventPlayerDisconnect` removes *all* entries for that slot.
 
-**Death tracking:** `EventPlayerDeath` → `DeathStack.Push(DeathEntry)`. Each death creates a new entry unconditionally (no slot dedup — a player can die → be respawned → die again in the same round, and both deaths are tracked independently).
+**Safety cap** (`pm_max_deaths_stored`, default 100): FIFO eviction when exceeded; eviction counter exposed via `!pmstats`.
 
-**Stack scope:** round-bounded. `EventRoundStart` wipes. `EventPlayerDisconnect` removes *all* entries for that slot.
-
-**Consumption:** `PopLastN` removes popped entries from the stack so the same death is never respawned twice. Already-alive or disconnected slots inside the popped set are skipped silently; the report line calls out the X/N respawn count.
-
-**Safety cap (`pm_max_deaths_stored`, default 100):** FIFO eviction when exceeded — oldest entry is dropped and a warning is logged. Eviction counter exposed via `!pmstats`.
-
-### 1.2 Respawn locations *(planned)*
-
-Still planned. Current respawn always uses `c.Respawn()` (engine-picked team spawn). See `§1.2` in previous revisions for proposed options (`spawn` / `inplace` / `aim` / `marker`). Gated on the extension contract in §3.
-
-### 1.3 Death replay *(shipped — `!pmreplay`)*
-
-Movement sampler + ghost playback for JB-style forensics.
-
-**Recording** (`pm_replay_enabled`, default `false`):
-- Timer-driven, adaptive rate keyed to alive-combatant count (yappers-style table: `<=10 → 6 ticks`, `<=20 → 7`, `<=30 → 8`, `<=40 → 9`, `>40 → 10`). At 64 tick × 6 ticks = ~10.7 Hz.
-- Per-slot ring buffer (fixed-size `MovementFrame[]` + head/count). Zero per-sample heap alloc — frame objects are reused in place; interned string references for `ModelName` + `ActiveWeaponDesignerName`.
-- `Menn.Utils.PlayerCache` (shared library — see `menn-utils/README.md`) avoids `Utilities.GetPlayers()` at tick rate. Heal-on-miss counters exposed via `!pmstats`. Same cache backs gatekeeper.
-- Event log sidecar (sparse `List<ReplayEvent>`): `ShotFired` / `DamageDealt` / `DamageTaken` / `WeaponPickup`. Tags `MovementFrame.ShotDirection` for shot-beam rendering.
-
-**Death snapshot** (`EventPlayerDeath`):
-- `Array.Copy` of the live ring buffer into a fresh `MovementFrame[]` attached to the `DeathEntry`. Live buffer resets for the slot's next life.
-- Event log transferred (reference handoff).
-- `KillerSnapshot` captures attacker's position, rotation, view angles, model name, weapon, hitgroup, damage + slot (for suicide detection).
-
-**Playback** (`MovementReplay`):
-- `CDynamicProp` + `SetModel(victim_model)` + four canned animations (`walk_new_rifle_stopped`, `crouch_new_rifle_stopped`, `idle_for_turns_stand_knife`, `idle_for_turns_crouch_knife`).
-- **Green glow companion** — secondary `prop_dynamic` with `Glow.GlowColorOverride = Color.Green` attached via `FollowEntity` so the T pops visually without tinting the main model.
-- **Look beam** (purple `CEnvBeam`) follows eye direction. Reused across frames.
-- **Shot beams** (red) spawn on frames where `ShotDirection` is non-null.
-- **Kill-shot beam** (blue) drawn from killer head → victim head on the final frame. Skipped for suicides (killer slot == victim slot).
-- **Killer ghost** (prop_dynamic of attacker model at kill position) shown for non-suicide kills, purely positional — no animation timeline for the killer.
-
-**Parallel multi-death:** one ghost per event member, all running on a unified timeline. Each ghost despawns at its own kill moment. By the end of the event window all ghosts are gone.
-
-**Concurrency:** one active replay at a time. Starting a new one cancels the previous. Cancellation paths: `!pmreplaystop`, `EventRoundStart`, `OnMapStart`, `Unload`, and `!pmres` / `!pmresevent` consuming any entry (consume-wins).
-
-**Denial path:** if every member's `MovementHistory` is null/empty (captured while recording was off), replay command prints `No replay data for event #id` and refuses. Recording state *at replay time* is irrelevant — only whether the data was captured.
-
-### 1.4 Individual-death list + replay — `!pmdeaths` / `!pmreplay`
-
-Individual deaths are the first-class object for browsing and replay.
-
-- **`!pmdeaths`** — list recent individual deaths with `#1..#N` IDs (newest = `#1`). Shows victim, time-ago, and killer (or "suicide").
-- **`!pmreplay [id|name]`** — play back one death. `id` = 1-based newest-first death id; `name` = newest death whose victim name contains the substring (case-insensitive). No arg = newest death. Does not consume.
-- **`!pmreplaystop`** — cancel active replay.
-
-### 1.5 Event grouping — `!pmevents` / `!pmresevent` (mass freekill respawn)
-
-Secondary feature for mass-respawn flows. Deaths are chain-linked into events using `pm_group_gap_seconds` (refreshing gap; deaths at T=0, T=1.2, T=2.4 all form one group if gap ≥ 1.2). Events are not persistent objects — they're recomputed from the stack each time a command runs.
-
-- **`!pmevents`** — list recent events with `#1..#M` IDs (newest = `#1`). Shows victim names, death count, duration, time-ago.
-- **`!pmresevent <id>`** — respawn everyone in event `#id`. Consumes all member deaths from the stack.
-
-All commands are `@css/generic`.
+**Captured fields.** `MovementHistory` (victim's recent ring buffer), `KillerMovementHistory` (killer's recent ring buffer, non-destructive peek), `Events` (sparse `ReplayEvent` log), `KillerSnapshot` (position/rotation/weapon/hitgroup at kill time), `DeathPosition` + `DeathAngles` (always captured, regardless of `pm_replay_enabled`), `VictimTier` (NotArmed / Pistol / Primary — drives ghost tint).
 
 ---
 
-## 2. Commands
+## 2. Respawn — `!sres`, `!sresevent`
 
-### Generic staff (`@css/generic`)
+`!sres [count|#id|name] [spawn|death]` — one command, four shapes:
+- no arg → newest 1
+- numeric `N` → last N from the stack top (count)
+- `#N` → specific stable id
+- bareword → newest victim-name substring match (case-insensitive)
 
-| Command | Effect |
-|---|---|
-| `!pmres [N]` | Respawn last N individual deaths (no grouping). Default `N=1`. |
-| `!pmdeaths` | List recent individual deaths with `#id`. |
-| `!pmreplay [id\|name]` | Play back individual death `#id`, newest name-match, or newest (default). |
-| `!pmreplaystop` | Cancel active replay. |
-| `!pmevents` | List recent death-events (mass-respawn flow). |
-| `!pmresevent <id>` | Respawn everyone in event `#id`. |
-| `!pmstats` | Storage footprint + sampler counters (deaths/cap, live buffers, memory, sampler tick count, pool stats). |
-| `!pmrecording [on/off/toggle]` | Toggle `pm_replay_enabled` live. |
+`!sresevent [event_id] [spawn|death]` — revive everyone in a chain. Default = newest event. `event_id` is any death-id within the chain; `DeathStack.PopGroupContainingId` walks the chain bounds via the `pm_group_gap_seconds` rule.
 
-### Anyone (no admin flag required)
+**Default location: death position**, with team-spawn fallback when no position was captured (rare disconnect-race case). Override with trailing `spawn` / `team`. Respawn defers a frame so the engine has time to revive the pawn before teleport.
 
-| Command | Effect |
-|---|---|
-| `!fk` | Flag the caller's most recent death as a freekill; staff (`@css/generic`) get a chat alert with the exact `!pmr #id` command. Also triggered when a player types `fk` / `freekill` as a standalone word in chat. Dead-only — living players are silently filtered (chat) or get a one-line nudge (command). Per-caller cooldown (`pm_fk_cooldown_seconds`, default 30s). |
+**Skips silently:** disconnected, already alive, on team Spectator/None. Reports `Respawned X/Y: …` or `Respawned 0/Y — all alive or disconnected`.
 
-### Debug (`@css/root`)
-
-| Command | Effect |
-|---|---|
-| `css_pmstack` | Dump current death stack with ages + group boundaries + per-entry metadata. |
-| `css_pm_killbot <name>` | Force-kill a bot by name — triggers a real `EventPlayerDeath` for testing. |
-| `css_pmperfbench` | Run 10,000 synthetic sampler ops, report ns/op + p50/p95/p99 latency. |
-| `css_pmreplay_status` | Dump active replay state + accumulated perf stats. |
+**Consume-wins:** if the popped entries belong to the active replay, the replay cancels.
 
 ---
 
-## 3. Extension mechanism *(planned)*
+## 3. Replay — `!replay`, `!replayevent`, `!stopreplay`
 
-Two-layer model: config toggles (ConVars + JSON) for shipped behavior, and a plugin-capability contract for custom respawn locations / replay renderers.
+`!replay [id|name]` plays one death (default newest). `!replayevent [event_id]` plays every member of an event together. Both default to newest target when called without an arg.
 
-### 3.1 `IRespawnLocation` (stack contract, planned)
+**Channels.** Each victim is one `MemberChannel`. When `KillerMovementHistory` is present and the killer isn't already a victim in the same group, an additional **killer-companion channel** is added so the CT animates alongside the T.
 
-Would ship in a companion `Postmortem.Contracts.dll` so other plugins can add location providers without a hard reference to the main assembly.
+**End-aligned timeline.** Channels share a single `_frameIndex`. `TotalFrames = max(channel.Frames.Length)`; each channel has `StartFrameDelay = TotalFrames - Frames.Length`, so all channels finish on the same wall-clock kill tick. Shorter channels spawn lazily once `_frameIndex` reaches their delay.
 
-```csharp
-public interface IRespawnLocation {
-    string Key { get; }    // stable identifier used in !pmres
-    string Label { get; }  // human-readable for listings
-    Task<RespawnPoint?> GetPointAsync(ulong targetSteamId, ulong invokerSteamId);
-}
+**Visuals.**
+- Victim ghost: green glow companion, model tinted by `VictimTier` (NotArmed = natural, Pistol = yellow, Primary = red).
+- Killer ghost: red glow companion, natural model color.
+- Look beam (lime, 1.0 thick) follows eye direction.
+- Shot beams (red) flash on frames with `ShotDirection`.
+- Kill-shot beam (blue, killer head → victim head) drawn on the victim's final tick. Skipped for suicides (`KillerSlot == VictimSlot`) and world kills (`KillerAt is null`).
 
-public record RespawnPoint(Vector Position, QAngle Angles);
-```
+**Multi-victim de-dup.** A single killer who killed N victims in one event renders as one channel, not N. Killers who are also victims within the event are skipped as companions (they'd render twice).
 
-- Async to permit cross-plugin / DB / trace lookups.
-- Returns `null` when not resolvable (e.g., a warden-marker provider when no warden is set).
-- Discovered from `extensions/*.dll` at load; keys must be unique (loader rejects duplicates with a clear log message).
+**Concurrency.** One active replay at a time. Cancellation paths: `!stopreplay`, new replay, `EventRoundStart`, `OnMapStart`, `Unload`, and `!sres` / `!sresevent` consuming a member.
 
-### 3.2 Built-in implementations (when §1.2 lands)
-
-- `SpawnLocation` — random team spawn.
-- `InPlaceLocation` — death position + angles.
-- `AimLocation` — invoker's aim-trace.
+**Denial.** If every member's `MovementHistory` is null/empty (recording was off at death time), the command refuses with `No replay data for …`.
 
 ---
 
-## 4. Config
+## 4. Browse — `!deaths`, `!devents`
 
-### 4.1 Shipped ConVars
+`!deaths` — newest-first individual list. Rows show `#id (ago) victim — killed by killer` (or `suicide`). Victim names tinted yellow, killer names tinted red.
 
-| ConVar | Default | Purpose |
-|---|---|---|
-| `pm_group_gap_seconds` | 1.5 | Chain-link gap for event formation. `0` = every death is its own event. Range 0–60. |
-| `pm_replay_enabled` | true | Master kill-switch for movement sampling + replay. Off = no sampling. |
-| `pm_replay_window_seconds` | 10.0 | Rolling window length per player. 10 s ≈ enough for rebellion context. Range 1–60. |
-| `pm_replay_sample_ticks_min` | 6 | Sample interval in ticks when ≤10 players alive (64 tick / 6 ≈ 10.7 Hz). Range 1–32. |
-| `pm_replay_sample_ticks_max` | 10 | Sample interval in ticks when >40 players alive. Range 1–32. |
-| `pm_max_deaths_stored` | 100 | Safety cap on DeathStack depth. FIFO eviction + log warning when exceeded. Range 32–2000. |
-| `pm_replay_linger_seconds` | 5.0 | Seconds replay entities stay on screen after the last frame plays. Range 0–30. |
-| `pm_chat_prefix` | `pm` | Chat-line tag, wrapped in `[ ]` on output (`"pm"` → `[pm]`). |
-| `pm_fk_cooldown_seconds` | 30.0 | Minimum seconds between `!fk` complaints per player (anti-spam). Range 0–600. |
+`!devents` — newest-first chain list. Rows show `#id (ago) N deaths in Xs: name1, name2, …`. Event id = the chain's newest member id; any id within the chain resolves the same chain via `FindGroupContainingId`.
 
-### 4.2 Planned (JSON)
-
-Full schema lands when §1.2 ships. Tentative keys: `DefaultRespawnLocation`.
+Both list headers carry an inline command hint so admins don't have to memorize the verbs.
 
 ---
 
-## 5. Data structures
+## 5. Player-facing — `!fk`
 
-Source-of-truth definitions (read these for the current shape; this section
-is just the map):
+`!fk` (no admin flag): the caller's most recent death is flagged as a freekill complaint. Staff with `@css/generic` receive a chat alert containing the `!replay <id>` command — the command portion is colored `LightYellow` against the red urgency line so it stands out.
+
+Triggered by either the `!fk` command or by typing `fk` / `freekill` as a standalone word in chat. Dead-only — living callers are silently filtered (chat) or get a one-line nudge (command). Per-caller cooldown via `pm_fk_cooldown_seconds`.
+
+---
+
+## 6. Staff chain alert
+
+When a chain closes (no new death within `pm_group_gap_seconds`) and the chain size meets `pm_event_alert_min_deaths` (default 3), staff receive `⚠ N-kill chain just ended — !replayevent <id>` (command portion colored).
+
+**Debounce.** Each death push extends the timer to `gap + 0.5s`. The chain stays "open" as long as kills keep landing inside the gap. The alert fires exactly once when the chain closes.
+
+**Consume-suppression.** At fire time the stack is re-queried via `FindGroupContainingId`. If an admin already consumed the event with `!sresevent` (size dropped below threshold), no alert fires.
+
+Set `pm_event_alert_min_deaths 0` to disable. Reset on round/map/unload.
+
+---
+
+## 7. Movement sampler
+
+Timer-driven. Adaptive interval keyed to alive-combatant count (yappers-style table: `≤10 → ticks_min`, `≤20 → +1`, `≤30 → +2`, `≤40 → +3`, `>40 → ticks_max`). Rate is recomputed at `EventRoundStart` and on live ConVar change (see §9).
+
+**Per-slot ring buffer.** Fixed-capacity, head-and-count, sized to `ceil(window_seconds × Hz) + 8` and clamped to `[16, 2048]`. `MovementFrame` slots are reused in place — zero per-sample heap allocation. String fields are interned.
+
+**Snapshots.**
+- `SnapshotForDeath(slot)` — copies frames into a fresh array and clears the live ring (victim is dead — fresh window for next life).
+- `PeekFramesForSlot(slot)` — non-destructive copy; used at kill time to grab the killer's recent buffer without disturbing their ongoing window.
+
+**`PlayerCache`** (from `menn-utils`) replaces `Utilities.GetPlayers()` at tick rate. Heal-on-miss counters in `!pmstats`.
+
+---
+
+## 8. Memory footprint
+
+Per `MovementFrame`: ~72 B (per-frame estimate used by `!pmstats`); real heap closer to 150–200 B due to per-frame `Vector`/`QAngle` wrapper objects.
+
+Per buffer (default `window=10s`, `ticks_min=6` at 64-tick): ~115 frames ≈ 8 KB.
+
+| Setting | Live (65 slots) | Per death (V+K) | Stack at cap | Total |
+|---|---|---|---|---|
+| Defaults | ~540 KB | ~16 KB | ~1.6 MB | **~2 MB** |
+| Aggressive (`window=20`, `ticks_min=2`, cap 500) | ~3 MB | ~94 KB | ~47 MB | **~50 MB** |
+| Max settings (`window=60`, `ticks_min=1`, cap 2000) | ~9.5 MB | ~295 KB | ~590 MB | **~600 MB** |
+
+Round-bounded clearing keeps real-world stacks well below the cap.
+
+---
+
+## 9. ConVars (all live-tunable)
+
+| ConVar | Default | Range | Notes |
+|---|---|---|---|
+| `pm_replay_enabled` | `true` | bool | Master switch for sampling + replay. Live (Func read each tick). |
+| `pm_replay_window_seconds` | `10.0` | 1–60 | Rolling window per player. Live via `ValueChanged` → `MovementSampler.RebuildBuffers`. |
+| `pm_replay_sample_ticks_min` | `6` | 1–32 | Sample interval at ≤10 alive. Live via `ValueChanged` → `RecomputeInterval`. |
+| `pm_replay_sample_ticks_max` | `10` | 1–32 | Sample interval at >40 alive. Live via `ValueChanged`. |
+| `pm_replay_linger_seconds` | `5.0` | 0–30 | Replay-end linger. Live (Func per Tick in `MovementReplay`). |
+| `pm_max_deaths_stored` | `100` | 32–2000 | Stack cap. Live (read on each push). |
+| `pm_group_gap_seconds` | `1.5` | 0–60 | Chain-link gap. Live (read per command + chain alert). |
+| `pm_event_alert_min_deaths` | `3` | 0–64 | Staff alert threshold (0 = off). Live. |
+| `pm_fk_cooldown_seconds` | `30.0` | 0–600 | `!fk` cooldown. Live. |
+| `pm_chat_prefix` | `pm` | string | Chat tag. Live. |
+
+---
+
+## 10. Data structures
 
 | Type | File | Notes |
 |---|---|---|
-| `DeathEntry` | `DeathStack.cs:8` | `MovementHistory`/`Events`/`KillerAt` are null when `pm_replay_enabled` was off at the time of death. |
-| `MovementFrame` | `Replay/MovementFrame.cs:14` | Reference type, reused in `RingBuffer` slots. `ShotDirection` non-null only on frames where the player fired. `JbRoleFlags` reserved (zero in v1). |
-| `KillerSnapshot` | `Replay/ReplayEvent.cs:21` | `KillerSlot == VictimSlot` is how suicide detection works (bot SteamIDs all collide at 0). |
-| `ReplayEvent` (tagged union: `ShotFired`, `DamageDealt`, `DamageTaken`, `WeaponPickup`) | `Replay/ReplayEvent.cs:7-17` | `At` is seconds since round start, same timeline as `MovementFrame.TimeSinceRoundStart`. |
+| `DeathEntry` | `DeathStack.cs` | `Id` is init-only, stamped by `Push`. `MovementHistory` / `KillerMovementHistory` / `Events` / `KillerAt` are null when sampling was off (or no killer). `DeathPosition` / `DeathAngles` always captured. |
+| `MovementFrame` | `Replay/MovementFrame.cs` | Reference type, reused in ring slots. `ShotDirection` non-null only on frames where the player fired. |
+| `KillerSnapshot` | `Replay/ReplayEvent.cs` | `KillerSlot == VictimSlot` ⇒ suicide (bot SteamIDs all collide at 0). |
+| `ReplayEvent` (`ShotFired` / `DamageDealt` / `DamageTaken` / `WeaponPickup`) | `Replay/ReplayEvent.cs` | `At` is seconds since round start; same timeline as `MovementFrame.TimeSinceRoundStart`. |
 
 ---
 
-## 6. Perf
+## 11. Perf
 
-**Measured on cs2-jb-lab @ 64 tick × 16 bots, recording=on, 10.7 Hz:**
+Measured on cs2-jb-lab @ 64 tick × 16 bots, recording=on, ~10.7 Hz sampling:
 
-| Op | p50 | p95 | p99 | Notes |
-|---|---|---|---|---|
-| `replay.sample_one_player` | ~3 µs | ~33 µs | ~45 µs | Above 20 µs target; dominated by occasional schema-read stalls |
-| `replay.sampler_tick` | ~90 µs | ~110 µs | ~130 µs | Well under 500 µs target |
-| `replay.death_snapshot` | ~27 µs | ~730 µs | ~730 µs | Small n (3–10); warmup spikes |
+| Op | p50 | p95 | p99 |
+|---|---|---|---|
+| `replay.sample_one_player` | ~3 µs | ~33 µs | ~45 µs |
+| `replay.sampler_tick` | ~90 µs | ~110 µs | ~130 µs |
+| `replay.death_snapshot` | ~27 µs | ~730 µs | ~730 µs |
 
-Tick-budget impact at 32 players × 10.7 Hz ≈ 0.6% of a 15625 µs server frame — cheap. p99 spikes (~4 ms `max`) are rare Gen1 GC or JIT stalls; never sustained.
+Tick budget at 32 players × 10.7 Hz ≈ 0.6% of a 15625 µs server frame. p99 spikes (~few ms `max`) are rare Gen1 GC / JIT stalls; never sustained.
 
-`css_pmperfbench` gives a single-number ns/op ground truth for any server; recommended when deciding whether to raise the sample rate.
-
----
-
-## 7. Known gotchas
-
-- **"prop_dynamic at (0,0,0) has no model name!"** engine warnings during replay startup — harmless, inherited from yappers' spawn order (`DispatchSpawn` before `SetModel`). Reversing the order breaks the prop entirely.
-- **"no sequence named:walk_new_rifle_stopped"** on `tm_phoenix` model — canned anim names are character-model-specific; some models don't have the rifle-stopped idle. Replay still runs (position/orientation tracks), just without animation. Mitigated by only sending `SetAnimation` on anim-state change (stand↔crouch, knife↔rifle) instead of per-tick — so the engine logs one warning per transition instead of ~10/sec.
-- **Suicide detection** uses `KillerSlot == VictimSlot`, not steam IDs (both bots have `SteamID=0`). Prevents the killer ghost / kill-shot beam from rendering on suicides while correctly showing them for bot-on-bot kills.
+`css_pmperfbench` runs a synthetic ns/op benchmark for any server.
 
 ---
 
-## 8. Open questions
+## 12. Known gotchas
 
-1. Location returning `null` (when §1.2 lands) — skip that candidate, fall back to default, or refuse the whole command?
-2. Scrub / pause / reverse during replay — the plan cut these for simplicity; user feedback may pull them back in.
-3. ~~`PlayerCache` extraction~~ — done 2026-04-24. Lives in `menn-utils` (`Menn.Utils.PlayerCache`); postmortem references *only* `menn-utils` (no community-internal libraries) so the bundle stays externally shareable.
+- **`prop_dynamic at (0,0,0) has no model name!`** — harmless engine warning during ghost spawn (yappers' `DispatchSpawn` before `SetModel` order). Reversing breaks the prop entirely.
+- **Suicide / world-kill detection** uses `KillerSlot == VictimSlot` (bot SteamIDs collide at 0) plus `KillerAt is null` for fall/world damage. Both paths skip the kill-shot beam and the killer ghost.
+- **Animgraph-driven models.** Modern CS2 player models are graph-driven — `SetAnimation` calls log warnings and don't take effect. Replay relies on `UseAnimGraph=true` and the model's default idle pose; position/orientation/velocity all track correctly via `Teleport`.
