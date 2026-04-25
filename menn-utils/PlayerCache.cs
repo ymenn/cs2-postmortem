@@ -134,13 +134,23 @@ public sealed class PlayerCache
 
         plugin.RegisterListener<Listeners.OnMapStart>(_ => Reconcile());
 
-        // Always reconcile at Start (not just on hot reload). On a cold load
-        // mid-session, players already on the server haven't fired
-        // OnClientPutInServer / EventPlayerConnectFull for THIS plugin
-        // instance, so the cache would stay empty until the next map change.
-        // Reconcile is idempotent and reads the engine's authoritative list.
-        Reconcile();
-        _ = hotReload;
+        if (hotReload)
+        {
+            // Hot reload: engine is fully up, players present. Reconcile
+            // synchronously so the cache is hot before the next tick.
+            Reconcile();
+        }
+        else
+        {
+            // Cold load (server boot or fresh plugin install mid-session):
+            // calling Utilities.GetPlayers() inside Load can fault on a fresh
+            // boot — the engine's player slot system isn't always wired yet,
+            // and CSSharp's native callbacks can crash with "callback on GCed
+            // delegate". Defer one frame so Load returns first. On a normal
+            // boot OnMapStart will reconcile too; this branch matters when
+            // the plugin is dropped onto a running server with players.
+            Server.NextFrame(Reconcile);
+        }
     }
 
     // Wipe + rehydrate from the engine's authoritative player list. Cheap to
