@@ -18,10 +18,19 @@ public enum WeaponTier
 // pm_replay_enabled=false at the time of death. The stack works regardless —
 // callers that want replay data check for null.
 //
+// KillerMovementHistory is a non-destructive snapshot of the *killer's*
+// recent ring buffer (taken at the same instant as MovementHistory) so the
+// CT can be replayed alongside the T. Null when sampling was off, or the
+// kill was a suicide (KillerSlot == Slot), or the killer's buffer was empty.
+//
 // DeathPosition / DeathAngles are captured unconditionally (regardless of
 // pm_replay_enabled) because respawn-at-death doesn't need a full movement
 // window — just where the body fell. Null only if the victim's pawn couldn't
 // be read at death time (disconnect race, etc).
+//
+// Id is assigned by DeathStack.Push (stable, monotonic within a round). User
+// types it in commands like `!replay 7` or `!sres #7`. Reset on round_start /
+// map_start so numbers stay small.
 public sealed record DeathEntry(
     int Slot,
     string VictimName,
@@ -31,7 +40,11 @@ public sealed record DeathEntry(
     KillerSnapshot? KillerAt,
     Vector? DeathPosition,
     QAngle? DeathAngles,
-    WeaponTier VictimTier = WeaponTier.NotArmed);
+    WeaponTier VictimTier = WeaponTier.NotArmed,
+    MovementFrame[]? KillerMovementHistory = null)
+{
+    public int Id { get; init; }
+}
 
 // Round-bounded LIFO of recent deaths.
 //
@@ -52,21 +65,26 @@ public sealed record DeathEntry(
 public sealed class DeathStack
 {
     private readonly List<DeathEntry> _order = new();
+    private int _nextId = 1;
     public int Count => _order.Count;
 
     public int Evictions { get; private set; }
     public int PeakCount { get; private set; }
 
-    public void Push(DeathEntry entry, int cap)
+    // Stamps a stable Id on the entry and pushes it newest-last. Returns the
+    // pushed entry (with Id populated) so the caller can log/echo it.
+    public DeathEntry Push(DeathEntry entry, int cap)
     {
+        var stamped = entry with { Id = _nextId++ };
         if (_order.Count >= cap)
         {
             // FIFO: drop oldest.
             _order.RemoveAt(0);
             Evictions++;
         }
-        _order.Add(entry);
+        _order.Add(stamped);
         if (_order.Count > PeakCount) PeakCount = _order.Count;
+        return stamped;
     }
 
     public int Remove(int slot)
@@ -88,6 +106,14 @@ public sealed class DeathStack
         _order.Clear();
     }
 
+    // Reset the id counter — called from round_start / map_start so
+    // numbers don't grow across rounds. Stack itself is also cleared at
+    // those points; resetting is safe because no live references survive.
+    public void ResetIds()
+    {
+        _nextId = 1;
+    }
+
     // Debug: newest-first snapshot (doesn't mutate).
     public IReadOnlyList<DeathEntry> SnapshotNewestFirst()
     {
@@ -98,15 +124,28 @@ public sealed class DeathStack
         return snap;
     }
 
-    // Pop a single entry at the given newest-first index. Used by !pmres
-    // when the caller targeted a specific death by name.
-    public DeathEntry? PopAt(int newestFirstIndex)
+    // Pop the entry with the given stable Id, or null if not in the stack.
+    // Used by !sres #N and !replay <id>.
+    public DeathEntry? PopById(int id)
     {
-        if (newestFirstIndex < 0 || newestFirstIndex >= _order.Count) return null;
-        var orderIdx = _order.Count - 1 - newestFirstIndex;
-        var entry = _order[orderIdx];
-        _order.RemoveAt(orderIdx);
-        return entry;
+        for (var i = _order.Count - 1; i >= 0; i--)
+        {
+            if (_order[i].Id == id)
+            {
+                var entry = _order[i];
+                _order.RemoveAt(i);
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    // Find the entry with the given stable Id without removing it.
+    public DeathEntry? FindById(int id)
+    {
+        for (var i = 0; i < _order.Count; i++)
+            if (_order[i].Id == id) return _order[i];
+        return null;
     }
 
     // Pop the last N individual deaths, newest-first. Used by !pmres (no
@@ -146,40 +185,57 @@ public sealed class DeathStack
         return groups;
     }
 
-    // Pop the event at index groupIndex (0-based from newest) using the same
-    // chain-based grouping. Used by !pmresevent. Returns the event's entries
-    // (newest-first) or empty if groupIndex is out of range.
-    public IReadOnlyList<DeathEntry> PopGroup(int groupIndex, double gapSeconds)
+    // Find the chain-linked group containing the death with stable Id `id`,
+    // and pop every member. Returns newest-first or empty if no entry matches.
+    // Used by !sresevent <id>.
+    public IReadOnlyList<DeathEntry> PopGroupContainingId(int id, double gapSeconds)
     {
-        if (groupIndex < 0 || _order.Count == 0) return Array.Empty<DeathEntry>();
-        // Walk groups newest-first; when we reach groupIndex, that group is
-        // our target.
-        var i = _order.Count - 1;
-        var currentGroupIdx = 0;
-        while (i >= 0)
+        if (_order.Count == 0) return Array.Empty<DeathEntry>();
+        var found = -1;
+        for (var i = 0; i < _order.Count; i++)
         {
-            var groupEndExclusive = i + 1;  // _order index range (startInclusive, groupEndExclusive]
-            var anchor = _order[i].At;
-            i--;
-            while (i >= 0 && (anchor - _order[i].At).TotalSeconds <= gapSeconds)
-            {
-                anchor = _order[i].At;
-                i--;
-            }
-            var groupStartInclusive = i + 1;
-
-            if (currentGroupIdx == groupIndex)
-            {
-                var take = groupEndExclusive - groupStartInclusive;
-                var popped = new DeathEntry[take];
-                // popped newest-first: _order[groupEnd-1] .. _order[groupStart]
-                for (var k = 0; k < take; k++)
-                    popped[k] = _order[groupEndExclusive - 1 - k];
-                _order.RemoveRange(groupStartInclusive, take);
-                return popped;
-            }
-            currentGroupIdx++;
+            if (_order[i].Id == id) { found = i; break; }
         }
-        return Array.Empty<DeathEntry>();
+        if (found < 0) return Array.Empty<DeathEntry>();
+
+        var (lo, hi) = ExpandGroupBounds(found, gapSeconds);
+        var take = hi - lo + 1;
+        var popped = new DeathEntry[take];
+        // Newest-first: _order is oldest-first, so iterate hi → lo.
+        for (var k = 0; k < take; k++)
+            popped[k] = _order[hi - k];
+        _order.RemoveRange(lo, take);
+        return popped;
+    }
+
+    // Find the chain-linked group containing the death with stable Id `id`
+    // without removing entries. Used by !replayevent <id>. Newest-first.
+    public IReadOnlyList<DeathEntry> FindGroupContainingId(int id, double gapSeconds)
+    {
+        if (_order.Count == 0) return Array.Empty<DeathEntry>();
+        var found = -1;
+        for (var i = 0; i < _order.Count; i++)
+        {
+            if (_order[i].Id == id) { found = i; break; }
+        }
+        if (found < 0) return Array.Empty<DeathEntry>();
+
+        var (lo, hi) = ExpandGroupBounds(found, gapSeconds);
+        var take = hi - lo + 1;
+        var snap = new DeathEntry[take];
+        for (var k = 0; k < take; k++)
+            snap[k] = _order[hi - k];
+        return snap;
+    }
+
+    // Walks left and right from `seed` while consecutive entries are within
+    // gap (chain-link refresh). Used by both Pop/Find Group variants.
+    private (int lo, int hi) ExpandGroupBounds(int seed, double gapSeconds)
+    {
+        var lo = seed;
+        while (lo > 0 && (_order[lo].At - _order[lo - 1].At).TotalSeconds <= gapSeconds) lo--;
+        var hi = seed;
+        while (hi < _order.Count - 1 && (_order[hi + 1].At - _order[hi].At).TotalSeconds <= gapSeconds) hi++;
+        return (lo, hi);
     }
 }

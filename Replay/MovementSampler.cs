@@ -137,6 +137,28 @@ public sealed class MovementSampler
         }
     }
 
+    // Called from the plugin when pm_replay_window_seconds changes mid-round —
+    // resize each live buffer to the new capacity. Buffers whose capacity
+    // already matches are left untouched (no data loss); mismatched ones are
+    // dropped so the next sample reallocates at the right size. This is
+    // exactly what OnRoundStart does already, exposed as a public hook.
+    public void RebuildBuffers()
+    {
+        var targetCapacity = ComputeRingCapacity();
+        for (var i = 0; i < MaxSlots; i++)
+        {
+            var buf = _buffers[i];
+            if (buf is null) continue;
+            if (buf.Capacity != targetCapacity)
+                _buffers[i] = null;
+        }
+    }
+
+    // Called from the plugin when pm_replay_sample_ticks_min/max changes —
+    // recompute the interval and recreate the timer if it differs. Cheap;
+    // ResetTimer no-ops when the chosen interval is unchanged.
+    public void RecomputeInterval() => ResetTimer();
+
     private void OnRoundStart()
     {
         // Clear any stale buffers from the last round — fresh windows per life.
@@ -306,6 +328,17 @@ public sealed class MovementSampler
         buf?.Clear();
         log?.Clear();
         return (frames, copiedLog);
+    }
+
+    // Non-destructive snapshot of a slot's live buffer — used at kill time to
+    // grab the *killer's* recent frames so they can be replayed alongside the
+    // victim. We don't clear: the killer is still alive and their buffer needs
+    // to keep filling toward their next death.
+    public MovementFrame[]? PeekFramesForSlot(int slot)
+    {
+        var buf = _buffers[slot];
+        if (buf is null || buf.Count == 0) return null;
+        return buf.SnapshotCopy();
     }
 
     // Append to the slot's event log, if sampling is on and the log exists.

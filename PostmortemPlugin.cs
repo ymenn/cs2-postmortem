@@ -105,6 +105,14 @@ public partial class PostmortemPlugin : BasePlugin
         new RangeValidator<float>(0.0f, 600.0f)
     );
 
+    public readonly FakeConVar<int> CvEventAlertMinDeaths = new(
+        "pm_event_alert_min_deaths",
+        "Minimum chain size to alert staff with !replayevent. 0 = disabled.",
+        3,
+        ConVarFlags.FCVAR_NONE,
+        new RangeValidator<int>(0, 64)
+    );
+
     private readonly DeathStack _stack = new();
     private readonly StringIntern _intern = new();
     private readonly PerfTracker _perf = new();
@@ -117,6 +125,17 @@ public partial class PostmortemPlugin : BasePlugin
     private EventRecorder _recorder = default!;
     private MovementReplay? _activeReplay;
     private float _roundStartRealtime;
+
+    // Chain-end staff alert. We don't alert on each death because deaths can
+    // keep arriving within `pm_group_gap_seconds` (one event still building);
+    // each new death extends the timer (debounce). When the timer fires
+    // without further pushes, the chain is closed — if it grew big enough we
+    // tell staff. _chainAnchorId is the most recently pushed death's id; the
+    // alert sends `!replayevent <anchor>` because FindGroupContainingId walks
+    // both directions from any member.
+    private int? _chainAnchorId;
+    private int _chainCount;
+    private CounterStrikeSharp.API.Modules.Timers.Timer? _chainTimer;
 
     public override void Load(bool hotReload)
     {
@@ -137,6 +156,15 @@ public partial class PostmortemPlugin : BasePlugin
         _sampler.Start();
         _sampler.AfterTick = OnSamplerAfterTick;
 
+        // Live-tunable convars: rewire the sampler when values change so admins
+        // don't have to wait for the next round. Other convars are read fresh
+        // at the call site (CvGroupGap, CvMaxDeathsStored, CvReplayLinger,
+        // CvChatPrefix, CvFkCooldownSeconds, CvEventAlertMinDeaths,
+        // CvReplayEnabled) and need no hook.
+        CvReplayWindow.ValueChanged += (_, _) => _sampler.RebuildBuffers();
+        CvSampleTicksMin.ValueChanged += (_, _) => _sampler.RecomputeInterval();
+        CvSampleTicksMax.ValueChanged += (_, _) => _sampler.RecomputeInterval();
+
         _recorder = new EventRecorder(this, _sampler, _intern, () => CvReplayEnabled.Value);
         _recorder.Start();
 
@@ -146,6 +174,8 @@ public partial class PostmortemPlugin : BasePlugin
             {
                 _roundStartRealtime = Server.CurrentTime;
                 _stack.Clear();
+                _stack.ResetIds();
+                ResetChainState();
                 StopActiveReplay(reason: "round_start");
                 return HookResult.Continue;
             }
@@ -166,6 +196,8 @@ public partial class PostmortemPlugin : BasePlugin
         RegisterListener<Listeners.OnMapStart>(_ =>
         {
             _stack.Clear();
+            _stack.ResetIds();
+            ResetChainState();
             StopActiveReplay(reason: "map_start");
         });
 
@@ -182,6 +214,7 @@ public partial class PostmortemPlugin : BasePlugin
     public override void Unload(bool hotReload)
     {
         StopActiveReplay(reason: "unload");
+        ResetChainState();
         _sampler.AfterTick = null;
         _sampler.Stop();
         _stack.Clear();
@@ -199,6 +232,7 @@ public partial class PostmortemPlugin : BasePlugin
         MovementFrame[]? frames = null;
         List<ReplayEvent>? events = null;
         KillerSnapshot? killerSnap = null;
+        MovementFrame[]? killerFrames = null;
 
         if (CvReplayEnabled.Value)
         {
@@ -210,6 +244,13 @@ public partial class PostmortemPlugin : BasePlugin
                     frames = snap.Frames.Length == 0 ? null : snap.Frames;
                     events = snap.Events;
                     killerSnap = TryBuildKillerSnapshot(@event);
+
+                    // Peek the killer's live buffer (non-destructive — they're
+                    // still alive). Skip world/fall kills (no attacker), suicides
+                    // (attacker == victim), and disconnect races (invalid).
+                    var attacker = @event.Attacker;
+                    if (attacker is not null && attacker.IsValid && attacker.Slot != victim.Slot)
+                        killerFrames = _sampler.PeekFramesForSlot(attacker.Slot);
                 }
             );
         }
@@ -240,9 +281,11 @@ public partial class PostmortemPlugin : BasePlugin
             KillerAt: killerSnap,
             DeathPosition: deathPos,
             DeathAngles: deathAngles,
-            VictimTier: victimTier
+            VictimTier: victimTier,
+            KillerMovementHistory: killerFrames
         );
-        _stack.Push(entry, CvMaxDeathsStored.Value);
+        var pushed = _stack.Push(entry, CvMaxDeathsStored.Value);
+        TrackChainAndScheduleAlert(pushed);
 
         if (_stack.Evictions > 0 && _stack.Count == CvMaxDeathsStored.Value)
         {
@@ -256,10 +299,12 @@ public partial class PostmortemPlugin : BasePlugin
         }
 
         Logger.LogInformation(
-            "Postmortem: death_push slot={Slot} name={Name} frames={Frames} events={Events} killer={Killer} stackCount={Count}",
+            "Postmortem: death_push id={Id} slot={Slot} name={Name} frames={Frames} killerFrames={KFrames} events={Events} killer={Killer} stackCount={Count}",
+            pushed.Id,
             victim.Slot,
             victimName,
             frames?.Length ?? 0,
+            killerFrames?.Length ?? 0,
             events?.Count ?? 0,
             killerSnap?.KillerName ?? "-",
             _stack.Count
@@ -435,7 +480,7 @@ public partial class PostmortemPlugin : BasePlugin
         IReadOnlyList<DeathEntry> popped;
         if (deathIdTarget is { } targetId)
         {
-            var entry = _stack.PopAt(targetId - 1);
+            var entry = _stack.PopById(targetId);
             if (entry is null)
             {
                 Reply(caller, info, ChatColors.Yellow, Localizer["pm.replay.no_id", targetId]);
@@ -446,12 +491,13 @@ public partial class PostmortemPlugin : BasePlugin
         else if (nameNeedle is not null)
         {
             var snap = _stack.SnapshotNewestFirst();
-            if (!TryFindDeathByName(snap, nameNeedle, out var deathId))
+            var match = TryFindDeathByName(snap, nameNeedle);
+            if (match is null)
             {
                 Reply(caller, info, ChatColors.Yellow, Localizer["pm.res.no_name_match", nameNeedle]);
                 return;
             }
-            var entry = _stack.PopAt(deathId - 1);
+            var entry = _stack.PopById(match.Id);
             popped = entry is null ? Array.Empty<DeathEntry>() : new[] { entry };
         }
         else
@@ -542,13 +588,17 @@ public partial class PostmortemPlugin : BasePlugin
             var oldestAt = g[^1].At;
             var ago = FormatAgo(now - newestAt);
             var victimsLabel = string.Join(", ", victimNames);
+            // Event id = the anchor (newest) death's stable id. Stable for as
+            // long as the event is in the stack — typing an id won't shift
+            // when a new death pushes onto the top.
+            var eventId = g[0].Id;
             if (g.Count == 1)
-                lines.Add(Localizer["pm.events.row_one", i + 1, ago, victimsLabel]);
+                lines.Add(Localizer["pm.events.row_one", eventId, ago, victimsLabel]);
             else
             {
                 var duration = (newestAt - oldestAt).TotalSeconds.ToString("F1");
                 lines.Add(
-                    Localizer["pm.events.row_many", i + 1, ago, g.Count, duration, victimsLabel]
+                    Localizer["pm.events.row_many", eventId, ago, g.Count, duration, victimsLabel]
                 );
             }
         }
@@ -574,7 +624,7 @@ public partial class PostmortemPlugin : BasePlugin
         if (!TryParseRespawnWhere(info, 2, out var atDeath, caller))
             return;
 
-        var popped = _stack.PopGroup(id - 1, CvGroupGap.Value);
+        var popped = _stack.PopGroupContainingId(id, CvGroupGap.Value);
         if (popped.Count == 0)
         {
             Reply(caller, info, ChatColors.Yellow, Localizer["pm.event.none", id]);
@@ -706,7 +756,7 @@ public partial class PostmortemPlugin : BasePlugin
         for (var i = 0; i < snap.Count; i++)
         {
             var e = snap[i];
-            var id = i + 1;
+            var id = e.Id;
             var ago = FormatAgo(now - e.At);
             var killer = e.KillerAt;
             var victim = ColorName(e.VictimName);
@@ -738,22 +788,24 @@ public partial class PostmortemPlugin : BasePlugin
     {
         var snap = _stack.SnapshotNewestFirst();
 
-        // Resolve the individual death to play: by explicit 1-based id
-        // (newest-first), by name substring (newest match wins), or default
-        // to the newest death.
-        int id;
+        // Resolve the individual death to play: by explicit stable id, by name
+        // substring (newest match wins), or default to the newest death.
+        DeathEntry? entry = null;
+        int requestedId = 0;
         if (info.ArgCount < 2)
         {
-            id = 1;
+            if (snap.Count > 0) entry = snap[0];
         }
-        else if (int.TryParse(info.GetArg(1), out id) && id > 0)
+        else if (int.TryParse(info.GetArg(1), out var parsedId) && parsedId > 0)
         {
-            // explicit numeric death id — fall through
+            requestedId = parsedId;
+            entry = _stack.FindById(parsedId);
         }
         else
         {
             var needle = info.GetArg(1);
-            if (!TryFindDeathByName(snap, needle, out id))
+            entry = TryFindDeathByName(snap, needle);
+            if (entry is null)
             {
                 Reply(
                     caller,
@@ -765,13 +817,12 @@ public partial class PostmortemPlugin : BasePlugin
             }
         }
 
-        if (id - 1 >= snap.Count)
+        if (entry is null)
         {
-            Reply(caller, info, ChatColors.Yellow, Localizer["pm.replay.no_id", id]);
+            Reply(caller, info, ChatColors.Yellow, Localizer["pm.replay.no_id", requestedId]);
             return;
         }
-
-        var entry = snap[id - 1];
+        var id = entry.Id;
         if (entry.MovementHistory is null || entry.MovementHistory.Length == 0)
         {
             // MovementHistory is null/empty when pm_replay_enabled was off at
@@ -818,13 +869,12 @@ public partial class PostmortemPlugin : BasePlugin
             Reply(caller, info, ChatColors.Red, Localizer["pm.event.bad_id"]);
             return;
         }
-        var groups = _stack.SnapshotGroups(CvGroupGap.Value);
-        if (id - 1 >= groups.Count)
+        var group = _stack.FindGroupContainingId(id, CvGroupGap.Value);
+        if (group.Count == 0)
         {
             Reply(caller, info, ChatColors.Yellow, Localizer["pm.event.none", id]);
             return;
         }
-        var group = groups[id - 1];
         // MovementReplay drops members with empty histories internally, but
         // we want a clean "no data" reply if the whole group has nothing.
         var members = new List<DeathEntry>(group.Count);
@@ -863,27 +913,21 @@ public partial class PostmortemPlugin : BasePlugin
         );
     }
 
-    // Newest-first match of `needle` against victim names. Returns the 1-based
-    // death id of the first entry containing a match, so the caller can re-use
-    // the existing id code path.
-    private static bool TryFindDeathByName(
+    // Newest-first match of `needle` against victim names. Returns the matching
+    // entry (with its stable Id) or null. Caller uses entry.Id for any
+    // subsequent stack lookup.
+    private static DeathEntry? TryFindDeathByName(
         IReadOnlyList<DeathEntry> snapNewestFirst,
-        string needle,
-        out int deathId
+        string needle
     )
     {
-        deathId = 0;
-        if (string.IsNullOrWhiteSpace(needle))
-            return false;
-        for (var i = 0; i < snapNewestFirst.Count; i++)
+        if (string.IsNullOrWhiteSpace(needle)) return null;
+        foreach (var e in snapNewestFirst)
         {
-            if (snapNewestFirst[i].VictimName.Contains(needle, StringComparison.OrdinalIgnoreCase))
-            {
-                deathId = i + 1;
-                return true;
-            }
+            if (e.VictimName.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                return e;
         }
-        return false;
+        return null;
     }
 
     [ConsoleCommand(
@@ -941,17 +985,17 @@ public partial class PostmortemPlugin : BasePlugin
             }
         }
 
-        // Find the caller's most recent death in the stack; its 1-based
-        // newest-first index is exactly what `!pmr <id>` takes.
+        // Find the caller's most recent death in the stack; its stable Id is
+        // what `!replay <id>` takes (and stays stable as new deaths push).
         var snap = _stack.SnapshotNewestFirst();
         var deathId = 0;
         DeathEntry? entry = null;
-        for (var i = 0; i < snap.Count; i++)
+        foreach (var e in snap)
         {
-            if (snap[i].Slot == caller.Slot)
+            if (e.Slot == caller.Slot)
             {
-                deathId = i + 1;
-                entry = snap[i];
+                deathId = e.Id;
+                entry = e;
                 break;
             }
         }
@@ -966,11 +1010,16 @@ public partial class PostmortemPlugin : BasePlugin
 
         var victimName = caller.PlayerName ?? entry.VictimName;
         var killer = entry.KillerAt;
+        // The replay command is the actionable bit of the alert — colour it
+        // separately from the red urgency text so it's easy to spot and
+        // click-to-copy. Switch back to red after so any localizer suffix
+        // (currently none — command is always at end) keeps reading red.
+        var cmd = $"{ChatColors.LightYellow}!replay {deathId}{ChatColors.Red}";
         string alert;
         if (killer is null || killer.KillerSlot == entry.Slot)
-            alert = Localizer["pm.fk.alert_no_killer", victimName, deathId];
+            alert = Localizer["pm.fk.alert_no_killer", victimName, cmd];
         else
-            alert = Localizer["pm.fk.alert_kill", victimName, killer.KillerName, deathId];
+            alert = Localizer["pm.fk.alert_kill", victimName, killer.KillerName, cmd];
         var alertLine = $"{ChatPrefixColored} {ChatColors.Red}{alert}{ChatColors.Default}";
 
         var notified = 0;
@@ -1195,11 +1244,12 @@ public partial class PostmortemPlugin : BasePlugin
             var alive = c is not null && c.IsValid && c.PawnIsAlive ? "alive" : "dead";
             var age = (now - e.At).TotalSeconds;
             var frames = e.MovementHistory?.Length ?? 0;
+            var kframes = e.KillerMovementHistory?.Length ?? 0;
             var events = e.Events?.Count ?? 0;
             var killer = e.KillerAt?.KillerName ?? "-";
             var pos = e.DeathPosition is { } p ? $"({p.X:F0},{p.Y:F0},{p.Z:F0})" : "-";
             lines.Add(
-                $"  g{groupIdx} [{i}] slot={e.Slot} name={name} age={age:F1}s ({alive}) frames={frames} events={events} killer={killer} deathpos={pos}"
+                $"  g{groupIdx} #{e.Id} slot={e.Slot} name={name} age={age:F1}s ({alive}) frames={frames} kframes={kframes} events={events} killer={killer} deathpos={pos}"
             );
         }
         ReplyLines(caller, info, "stack", lines);
@@ -1321,6 +1371,71 @@ public partial class PostmortemPlugin : BasePlugin
 
     private static string ColorKillerName(string name) =>
         $"{ChatColors.LightRed}{name}{ChatColors.Default}";
+
+    // Debounce-style chain tracker. Each death push extends a timer to
+    // gap+0.5s; the chain closes when the timer fires without another push.
+    // On close, if the chain grew big enough, alert staff with the replay
+    // command for the event. We re-query the stack at fire time so an admin
+    // who already consumed the event with !sresevent doesn't get a stale
+    // alert.
+    private void TrackChainAndScheduleAlert(DeathEntry pushed)
+    {
+        var threshold = CvEventAlertMinDeaths.Value;
+        if (threshold <= 0) return;
+
+        _chainCount++;
+        _chainAnchorId = pushed.Id;
+
+        var gap = CvGroupGap.Value;
+        _chainTimer?.Kill();
+        _chainTimer = AddTimer(
+            gap + 0.5f,
+            FireChainAlertIfBigEnough,
+            CounterStrikeSharp.API.Modules.Timers.TimerFlags.STOP_ON_MAPCHANGE
+        );
+    }
+
+    private void FireChainAlertIfBigEnough()
+    {
+        var anchorId = _chainAnchorId;
+        var count = _chainCount;
+        ResetChainState();
+        if (anchorId is not int id) return;
+
+        var threshold = CvEventAlertMinDeaths.Value;
+        if (threshold <= 0 || count < threshold) return;
+
+        // Verify the event is still in the stack (admin may have consumed it
+        // via !sresevent before the debounce timer fired).
+        var group = _stack.FindGroupContainingId(id, CvGroupGap.Value);
+        if (group.Count < threshold) return;
+
+        var cmd = $"{ChatColors.LightYellow}!replayevent {id}{ChatColors.Red}";
+        var alert = Localizer["pm.event.alert", group.Count, cmd];
+        var alertLine = $"{ChatPrefixColored} {ChatColors.Red}{alert}{ChatColors.Default}";
+        var notified = 0;
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (p is null || !p.IsValid || p.IsBot) continue;
+            if (!AdminManager.PlayerHasPermissions(p, "@css/generic")) continue;
+            p.PrintToChat(alertLine);
+            notified++;
+        }
+        Logger.LogInformation(
+            "Postmortem: chain_alert eventId={Id} size={Size} notifiedAdmins={N}",
+            id,
+            group.Count,
+            notified
+        );
+    }
+
+    private void ResetChainState()
+    {
+        _chainTimer?.Kill();
+        _chainTimer = null;
+        _chainAnchorId = null;
+        _chainCount = 0;
+    }
 
     private void MaybeCancelReplayForEntries(IReadOnlyList<DeathEntry> entries)
     {

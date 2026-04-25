@@ -43,9 +43,9 @@ public sealed class MovementReplay
         public DeathEntry Entry = default!;
         public MovementFrame[] Frames = Array.Empty<MovementFrame>();
         public CDynamicProp? Ghost;
-        public CBaseModelEntity? GhostGlow;  // the nice green glow for the T
-        public CDynamicProp? KillerGhost;    // spawned at kill moment, not replay start
-        public CBaseModelEntity? KillerGlow; // red glow companion for the CT
+        public CBaseModelEntity? GhostGlow;  // green glow (T) or red glow (CT companion)
+        public CDynamicProp? KillerGhost;    // spawned at kill moment, only when no animated companion
+        public CBaseModelEntity? KillerGlow; // red glow for the static CT ghost
         public CEnvBeam? LookBeam;
         public readonly List<CEnvBeam> ShotBeams = new();
         public bool KillShotDrawn;
@@ -58,6 +58,20 @@ public sealed class MovementReplay
         // tick and emit a chat line when the T's weapon switches.
         public int NextEventIdx;
         public string? LastAnnouncedWeapon;
+        // End-alignment: every channel finishes on _frameIndex = TotalFrames-1
+        // (= the kill moment). Channels with shorter histories sit idle until
+        // _frameIndex reaches StartFrameDelay, then start playing. Lazy spawn
+        // keeps prop_dynamic ghosts off-map until their first frame plays.
+        public int StartFrameDelay;
+        public bool Spawned;
+        // Killer-companion (CT) channel rather than a victim (T) channel. Drives
+        // glow color (red), suppresses victim-tier tint, and skips the kill-shot
+        // beam / static killer-ghost spawn (those belong to the victim channel).
+        public bool IsKillerCompanion;
+        // Set on a victim channel when a killer-companion channel was created
+        // for it — FinishMember then skips the static SpawnKillerGhost (the
+        // animated companion already covers that role).
+        public bool HasAnimatedKiller;
     }
 
     public MovementReplay(
@@ -73,24 +87,53 @@ public sealed class MovementReplay
         _formatKillLine = formatKillLine;
         _formatShotLine = formatShotLine;
         _lingerSeconds = lingerSeconds;
-        _channels = new List<MemberChannel>(members.Count);
+        _channels = new List<MemberChannel>(members.Count * 2);
         _startedAt = DateTime.UtcNow;
 
-        var maxFrames = 0;
+        // Track which slots we've already added a killer-companion for, so a
+        // multi-victim event with a single killer (rambo) doesn't double-spawn
+        // the same ghost. Also avoid adding a killer-companion for someone
+        // who's already in `members` as their own victim — they'd render twice.
+        var memberSlots = new HashSet<int>();
+        foreach (var m in members) memberSlots.Add(m.Slot);
+        var killerSlotsAdded = new HashSet<int>();
+
         foreach (var m in members)
         {
-            var frames = m.MovementHistory ?? Array.Empty<MovementFrame>();
-            if (frames.Length == 0) continue;
-            maxFrames = Math.Max(maxFrames, frames.Length);
-            _channels.Add(new MemberChannel
+            var vFrames = m.MovementHistory ?? Array.Empty<MovementFrame>();
+            if (vFrames.Length == 0) continue;
+            var victimCh = new MemberChannel
             {
                 Entry = m,
-                Frames = frames,
-            });
-        }
-        TotalFrames = maxFrames;
+                Frames = vFrames,
+            };
+            _channels.Add(victimCh);
 
-        foreach (var ch in _channels) SpawnMember(ch);
+            if (m.KillerMovementHistory is { Length: > 0 } kFrames
+                && m.KillerAt is { } killerSnap
+                && killerSnap.KillerSlot != m.Slot
+                && !memberSlots.Contains(killerSnap.KillerSlot)
+                && killerSlotsAdded.Add(killerSnap.KillerSlot))
+            {
+                _channels.Add(new MemberChannel
+                {
+                    Entry = m,
+                    Frames = kFrames,
+                    IsKillerCompanion = true,
+                });
+                victimCh.HasAnimatedKiller = true;
+            }
+        }
+
+        // End-align: every channel ends on _frameIndex == TotalFrames - 1, i.e.
+        // the same wall-clock kill moment. A shorter history → larger
+        // StartFrameDelay → spawns later in the replay.
+        var maxFrames = 0;
+        foreach (var ch in _channels)
+            if (ch.Frames.Length > maxFrames) maxFrames = ch.Frames.Length;
+        TotalFrames = maxFrames;
+        foreach (var ch in _channels)
+            ch.StartFrameDelay = maxFrames - ch.Frames.Length;
     }
 
     private static void SpawnMember(MemberChannel ch)
@@ -125,15 +168,17 @@ public sealed class MovementReplay
         ghost.SetModel(modelName);
         ch.Ghost = ghost;
 
-        // Green glow companion prop — yappers' recipe. Follows the main ghost
-        // so the T pops visually without tinting the main model.
+        // Glow color: green for T (victim), red for the CT (killer companion)
+        // so admins can read the engagement at a glance — same convention as
+        // the static SpawnKillerGhost path.
+        var glowColor = ch.IsKillerCompanion ? Color.Red : Color.Green;
         var glow = Utilities.CreateEntityByName<CBaseModelEntity>("prop_dynamic");
         if (glow is not null)
         {
             glow.DispatchSpawn();
             glow.SetModel(modelName);
             glow.Spawnflags = 256u;
-            glow.Glow.GlowColorOverride = Color.Green;
+            glow.Glow.GlowColorOverride = glowColor;
             glow.Glow.GlowRange = 0;
             glow.Glow.GlowTeam = -1;
             glow.Glow.GlowType = 3;
@@ -192,6 +237,12 @@ public sealed class MovementReplay
     // transitions through Finished (last frame drawn, killer ghost spawned,
     // kill-shot beam drawn) and Despawned (entities killed) states, holding
     // LingerSeconds between the two so the kill moment is readable.
+    //
+    // Channels with StartFrameDelay > 0 sit idle until _frameIndex catches up,
+    // then spawn lazily. This is what end-aligns multiple channels on the same
+    // wall-clock kill moment (the killer companion is usually delayed only
+    // when the killer's history is shorter than the victim's, which is rare
+    // but does happen if the killer just respawned).
     public void Tick()
     {
         if (!IsPlaying) return;
@@ -202,16 +253,31 @@ public sealed class MovementReplay
         {
             if (ch.Despawned) continue;
 
+            var localFrame = _frameIndex - ch.StartFrameDelay;
+            if (localFrame < 0)
+            {
+                // Channel hasn't started yet — its history is shorter than the
+                // longest one so it begins partway into the replay.
+                anyAlive = true;
+                continue;
+            }
+
+            if (!ch.Spawned)
+            {
+                SpawnMember(ch);
+                ch.Spawned = true;
+            }
+
             if (!ch.Finished)
             {
-                if (_frameIndex >= ch.Frames.Length)
+                if (localFrame >= ch.Frames.Length)
                 {
                     FinishMember(ch);
                 }
                 else
                 {
-                    AdvanceMember(ch, _frameIndex);
-                    if (_frameIndex == ch.Frames.Length - 1) FinishMember(ch);
+                    AdvanceMember(ch, localFrame);
+                    if (localFrame == ch.Frames.Length - 1) FinishMember(ch);
                 }
             }
 
@@ -230,7 +296,11 @@ public sealed class MovementReplay
     private void AdvanceMember(MemberChannel ch, int frameIdx)
     {
         var frame = ch.Frames[frameIdx];
-        MaybeAnnounceVictimActions(ch, frame.TimeSinceRoundStart);
+        // Victim's chat-line announcer (T fired AK / threw HE / swung knife).
+        // Suppress for killer-companion channels — they don't carry a victim
+        // event log, and "killer fired" lines would just clutter the feed.
+        if (!ch.IsKillerCompanion)
+            MaybeAnnounceVictimActions(ch, frame.TimeSinceRoundStart);
         var ghost = ch.Ghost;
         if (ghost is null || !ghost.IsValid) return;
 
@@ -244,14 +314,16 @@ public sealed class MovementReplay
         // states — the ghost stands, but Teleport below still tracks the
         // captured position/orientation/velocity correctly.
         // Tint by victim's highest weapon tier — yellow = pistol, red =
-        // primary, default model color = unarmed. Falls back to whatever the
-        // sampler captured (usually white) when the victim was unarmed.
-        var tierRgb = ch.Entry.VictimTier switch
-        {
-            WeaponTier.Primary => (R: (byte)255, G: (byte)80, B: (byte)80),
-            WeaponTier.Pistol => (R: (byte)255, G: (byte)220, B: (byte)80),
-            _ => (frame.ModelRenderColor.R, frame.ModelRenderColor.G, frame.ModelRenderColor.B),
-        };
+        // primary, default model color = unarmed. Killer companions render in
+        // the model's natural color (the red glow already marks them as CT).
+        var tierRgb = ch.IsKillerCompanion
+            ? (frame.ModelRenderColor.R, frame.ModelRenderColor.G, frame.ModelRenderColor.B)
+            : ch.Entry.VictimTier switch
+            {
+                WeaponTier.Primary => (R: (byte)255, G: (byte)80, B: (byte)80),
+                WeaponTier.Pistol => (R: (byte)255, G: (byte)220, B: (byte)80),
+                _ => (frame.ModelRenderColor.R, frame.ModelRenderColor.G, frame.ModelRenderColor.B),
+            };
         ghost.RenderMode = RenderMode_t.kRenderTransAlpha;
         ghost.Render = Color.FromArgb((int)(255 * 0.8), tierRgb.R, tierRgb.G, tierRgb.B);
         Utilities.SetStateChanged(ghost, "CBaseModelEntity", "m_clrRender");
@@ -316,12 +388,19 @@ public sealed class MovementReplay
         ch.Finished = true;
         ch.FinishedAt = DateTime.UtcNow;
 
-        // Spawn the killer ghost at the kill moment — it's not meant to hang
-        // around throughout the replay.
-        SpawnKillerGhost(ch);
+        // Killer-companion channels carry no kill of their own. Mark finished
+        // and let the linger window despawn them; the kill-shot beam + static
+        // killer-ghost spawn belong to the victim channel.
+        if (ch.IsKillerCompanion) return;
+
+        // Spawn the static killer ghost only when no animated killer companion
+        // exists — the companion already represents the CT throughout playback.
+        if (!ch.HasAnimatedKiller)
+            SpawnKillerGhost(ch);
 
         // Draw kill-shot beam + chat line on the final frame transition.
-        // Skip suicides (killer slot == victim slot).
+        // Skip suicides (killer slot == victim slot) and world/fall kills
+        // (KillerAt null entirely).
         if (!ch.KillShotDrawn && ch.Entry.KillerAt is { } killer
             && killer.KillerSlot != ch.Entry.Slot)
         {

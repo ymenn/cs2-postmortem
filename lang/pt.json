@@ -52,6 +52,8 @@
   "pm.fk.no_death": "Não morreste recentemente",
   "pm.fk.cooldown": "Espera {0}s antes de reclamar outra vez",
   "pm.fk.thanks": "Staff notificado ({0})",
-  "pm.fk.alert_kill": "⚠ queixa de freekill de {0} (morto por {1}) — !pmr {2}",
-  "pm.fk.alert_no_killer": "⚠ queixa de freekill de {0} — !pmr {1}"
+  "pm.fk.alert_kill": "⚠ queixa de freekill de {0} (morto por {1}) — {2}",
+  "pm.fk.alert_no_killer": "⚠ queixa de freekill de {0} — {1}",
+
+  "pm.event.alert": "⚠ chain de {0} mortes acabou — {1}"
 }

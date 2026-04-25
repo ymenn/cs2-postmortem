@@ -52,6 +52,8 @@
   "pm.fk.no_death": "You haven't died recently",
   "pm.fk.cooldown": "Wait {0}s before complaining again",
   "pm.fk.thanks": "Staff notified ({0})",
-  "pm.fk.alert_kill": "⚠ freekill complaint from {0} (killed by {1}) — !pmr {2}",
-  "pm.fk.alert_no_killer": "⚠ freekill complaint from {0} — !pmr {1}"
+  "pm.fk.alert_kill": "⚠ freekill complaint from {0} (killed by {1}) — {2}",
+  "pm.fk.alert_no_killer": "⚠ freekill complaint from {0} — {1}",
+
+  "pm.event.alert": "⚠ {0}-kill chain just ended — {1}"
 }
