@@ -93,7 +93,7 @@ Set `pm_event_alert_min_deaths 0` to disable. Reset on round/map/unload.
 
 ## 7. Movement sampler
 
-Timer-driven. Adaptive interval keyed to alive-combatant count (yappers-style table: `≤10 → ticks_min`, `≤20 → +1`, `≤30 → +2`, `≤40 → +3`, `>40 → ticks_max`). Rate is recomputed at `EventRoundStart` and on live ConVar change (see §9).
+Timer-driven. Adaptive interval keyed to alive-combatant count: `≤10 → ticks_min`, `≤20 → +1`, `≤30 → +2`, `≤40 → +3`, `>40 → ticks_max`. Rate is recomputed at `EventRoundStart` and on live ConVar change (see §9).
 
 **Per-slot ring buffer.** Fixed-capacity, head-and-count, sized to `ceil(window_seconds × Hz) + 8` and clamped to `[16, 2048]`. `MovementFrame` slots are reused in place — zero per-sample heap allocation. String fields are interned.
 
@@ -167,6 +167,6 @@ Tick budget at 32 players × 10.7 Hz ≈ 0.6% of a 15625 µs server frame. p99 s
 
 ## 12. Known gotchas
 
-- **`prop_dynamic at (0,0,0) has no model name!`** — harmless engine warning during ghost spawn (yappers' `DispatchSpawn` before `SetModel` order). Reversing breaks the prop entirely.
+- **`prop_dynamic at (0,0,0) has no model name!`** — harmless engine warning during ghost spawn (`DispatchSpawn` is called before `SetModel`). Reversing the order breaks the prop entirely.
 - **Suicide / world-kill detection** uses `KillerSlot == VictimSlot` (bot SteamIDs collide at 0) plus `KillerAt is null` for fall/world damage. Both paths skip the kill-shot beam and the killer ghost.
 - **Animgraph-driven models.** Modern CS2 player models are graph-driven — `SetAnimation` calls log warnings and don't take effect. Replay relies on `UseAnimGraph=true` and the model's default idle pose; position/orientation/velocity all track correctly via `Teleport`.

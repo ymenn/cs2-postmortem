@@ -59,10 +59,10 @@ python3 /tmp/rc.py 'mp_ignore_round_win_conditions 1; mp_warmup_end; bot_quota 1
 Test with a real player connected (you on the server via the `connect` ingame
 or Steam). Bots show most of the mechanics but these specifically matter:
 
-- [ ] **Green glow companion prop visually pops on the T-side ghost** (yappers'
-  recipe — `Glow.GlowColorOverride = Color.Green` + `FollowEntity`). This is
-  the bit explicitly asked for. Confirm: during `!pmreplay`, the ghost model
-  has a soft green outline visible through walls.
+- [ ] **Green glow companion prop visually pops on the T-side ghost**
+  (`Glow.GlowColorOverride = Color.Green` + `FollowEntity` on a secondary
+  `prop_dynamic`). Confirm: during `!replay`, the ghost model has a soft
+  green outline visible through walls.
 - [ ] **Purple look beam** tracks head direction each frame without flicker.
 - [ ] **Red shot beams** flash on fire frames and disappear after their short
   lifetime. Rapid-fire weapons (SMGs) should produce a dense cluster.
@@ -78,7 +78,7 @@ or Steam). Bots show most of the mechanics but these specifically matter:
   cleanly on your main JB map.
 - [ ] **"prop_dynamic at (0,0,0) has no model name!" warnings are cosmetic** —
   no crashes, replay still runs. (Suppression would require reordering
-  `SetModel`/`DispatchSpawn`, which breaks spawn entirely per yappers.)
+  `SetModel`/`DispatchSpawn`, which breaks spawn entirely.)
 - [ ] **Replay visible to *all* players, not just the invoker** — CEnvBeam +
   CDynamicProp are server-side entities; every connected client should see
   them. Confirm on a second client or via a spectator.
