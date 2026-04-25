@@ -34,54 +34,78 @@ public partial class PostmortemPlugin : BasePlugin
     public override string ModuleAuthor => "menn";
     public override string ModuleDescription => "Admin tool: respawn + replay the last N deaths.";
 
-    public readonly FakeConVar<float> CvGroupGap =
-        new("pm_group_gap_seconds",
-            "Chain-link gap for !pmevents / !pmresevent / !pmreplay grouping (0 = no grouping).",
-            1.5f, ConVarFlags.FCVAR_NONE, new RangeValidator<float>(0.0f, 60.0f));
+    public readonly FakeConVar<float> CvGroupGap = new(
+        "pm_group_gap_seconds",
+        "Chain-link gap for !pmevents / !pmresevent / !pmreplay grouping (0 = no grouping).",
+        1.5f,
+        ConVarFlags.FCVAR_NONE,
+        new RangeValidator<float>(0.0f, 60.0f)
+    );
 
-    public readonly FakeConVar<bool> CvReplayEnabled =
-        new("pm_replay_enabled",
-            "Master kill-switch for movement sampling + replay. Off = no sampling, no replay.",
-            true);
+    public readonly FakeConVar<bool> CvReplayEnabled = new(
+        "pm_replay_enabled",
+        "Master kill-switch for movement sampling + replay. Off = no sampling, no replay.",
+        true
+    );
 
-    public readonly FakeConVar<float> CvReplayWindow =
-        new("pm_replay_window_seconds",
-            "Rolling movement window per player (seconds).",
-            10.0f, ConVarFlags.FCVAR_NONE, new RangeValidator<float>(1.0f, 60.0f));
+    public readonly FakeConVar<float> CvReplayWindow = new(
+        "pm_replay_window_seconds",
+        "Rolling movement window per player (seconds).",
+        10.0f,
+        ConVarFlags.FCVAR_NONE,
+        new RangeValidator<float>(1.0f, 60.0f)
+    );
 
-    public readonly FakeConVar<int> CvSampleTicksMin =
-        new("pm_replay_sample_ticks_min",
-            "Ticks between samples when <=10 players alive (lower = higher Hz).",
-            6, ConVarFlags.FCVAR_NONE, new RangeValidator<int>(1, 32));
+    public readonly FakeConVar<int> CvSampleTicksMin = new(
+        "pm_replay_sample_ticks_min",
+        "Ticks between samples when <=10 players alive (lower = higher Hz).",
+        6,
+        ConVarFlags.FCVAR_NONE,
+        new RangeValidator<int>(1, 32)
+    );
 
-    public readonly FakeConVar<int> CvSampleTicksMax =
-        new("pm_replay_sample_ticks_max",
-            "Ticks between samples when >40 players alive (lower = higher Hz).",
-            10, ConVarFlags.FCVAR_NONE, new RangeValidator<int>(1, 32));
+    public readonly FakeConVar<int> CvSampleTicksMax = new(
+        "pm_replay_sample_ticks_max",
+        "Ticks between samples when >40 players alive (lower = higher Hz).",
+        10,
+        ConVarFlags.FCVAR_NONE,
+        new RangeValidator<int>(1, 32)
+    );
 
-    public readonly FakeConVar<int> CvMaxDeathsStored =
-        new("pm_max_deaths_stored",
-            "Safety cap on DeathStack depth. FIFO eviction when exceeded.",
-            100, ConVarFlags.FCVAR_NONE, new RangeValidator<int>(32, 2000));
+    public readonly FakeConVar<int> CvMaxDeathsStored = new(
+        "pm_max_deaths_stored",
+        "Safety cap on DeathStack depth. FIFO eviction when exceeded.",
+        100,
+        ConVarFlags.FCVAR_NONE,
+        new RangeValidator<int>(32, 2000)
+    );
 
-    public readonly FakeConVar<string> CvChatPrefix =
-        new("pm_chat_prefix",
-            "Chat-line tag (wrapped in [ ] on output). e.g. 'pm' → [pm].",
-            "pm");
+    public readonly FakeConVar<string> CvChatPrefix = new(
+        "pm_chat_prefix",
+        "Chat-line tag (wrapped in [ ] on output). e.g. 'pm' → [pm].",
+        "pm"
+    );
 
-    public readonly FakeConVar<float> CvReplayLinger =
-        new("pm_replay_linger_seconds",
-            "Seconds to keep replay entities on screen after the last frame plays.",
-            5.0f, ConVarFlags.FCVAR_NONE, new RangeValidator<float>(0.0f, 30.0f));
+    public readonly FakeConVar<float> CvReplayLinger = new(
+        "pm_replay_linger_seconds",
+        "Seconds to keep replay entities on screen after the last frame plays.",
+        5.0f,
+        ConVarFlags.FCVAR_NONE,
+        new RangeValidator<float>(0.0f, 30.0f)
+    );
 
-    public readonly FakeConVar<float> CvFkCooldownSeconds =
-        new("pm_fk_cooldown_seconds",
-            "Minimum seconds between !fk complaints per player (anti-spam).",
-            30.0f, ConVarFlags.FCVAR_NONE, new RangeValidator<float>(0.0f, 600.0f));
+    public readonly FakeConVar<float> CvFkCooldownSeconds = new(
+        "pm_fk_cooldown_seconds",
+        "Minimum seconds between !fk complaints per player (anti-spam).",
+        30.0f,
+        ConVarFlags.FCVAR_NONE,
+        new RangeValidator<float>(0.0f, 600.0f)
+    );
 
     private readonly DeathStack _stack = new();
     private readonly StringIntern _intern = new();
     private readonly PerfTracker _perf = new();
+
     // Per-slot last-!fk timestamp for cooldown enforcement. Cleared on
     // disconnect (player slot can be recycled).
     private readonly Dictionary<int, DateTime> _lastFkAt = new();
@@ -97,11 +121,16 @@ public partial class PostmortemPlugin : BasePlugin
         _cache.Start(this, hotReload);
 
         _sampler = new MovementSampler(
-            this, _cache, _intern, _perf, Logger,
+            this,
+            _cache,
+            _intern,
+            _perf,
+            Logger,
             enabled: () => CvReplayEnabled.Value,
             windowSeconds: () => CvReplayWindow.Value,
             sampleTicksMin: () => CvSampleTicksMin.Value,
-            sampleTicksMax: () => CvSampleTicksMax.Value);
+            sampleTicksMax: () => CvSampleTicksMax.Value
+        );
         _sampler.Start();
         _sampler.AfterTick = OnSamplerAfterTick;
 
@@ -109,23 +138,27 @@ public partial class PostmortemPlugin : BasePlugin
         _recorder.Start();
 
         RegisterEventHandler<EventPlayerDeath>(OnPlayerDeath);
-        RegisterEventHandler<EventRoundStart>((_, _) =>
-        {
-            _roundStartRealtime = Server.CurrentTime;
-            _stack.Clear();
-            StopActiveReplay(reason: "round_start");
-            return HookResult.Continue;
-        });
-        RegisterEventHandler<EventPlayerDisconnect>((@event, _) =>
-        {
-            var c = @event.Userid;
-            if (c is not null && c.IsValid)
+        RegisterEventHandler<EventRoundStart>(
+            (_, _) =>
             {
-                _stack.Remove(c.Slot);
-                _lastFkAt.Remove(c.Slot);
+                _roundStartRealtime = Server.CurrentTime;
+                _stack.Clear();
+                StopActiveReplay(reason: "round_start");
+                return HookResult.Continue;
             }
-            return HookResult.Continue;
-        });
+        );
+        RegisterEventHandler<EventPlayerDisconnect>(
+            (@event, _) =>
+            {
+                var c = @event.Userid;
+                if (c is not null && c.IsValid)
+                {
+                    _stack.Remove(c.Slot);
+                    _lastFkAt.Remove(c.Slot);
+                }
+                return HookResult.Continue;
+            }
+        );
 
         RegisterListener<Listeners.OnMapStart>(_ =>
         {
@@ -155,7 +188,8 @@ public partial class PostmortemPlugin : BasePlugin
     private HookResult OnPlayerDeath(EventPlayerDeath @event, GameEventInfo info)
     {
         var victim = @event.Userid;
-        if (victim is null || !victim.IsValid) return HookResult.Continue;
+        if (victim is null || !victim.IsValid)
+            return HookResult.Continue;
 
         var victimName = victim.PlayerName ?? $"slot {victim.Slot}";
 
@@ -165,13 +199,16 @@ public partial class PostmortemPlugin : BasePlugin
 
         if (CvReplayEnabled.Value)
         {
-            _perf.Measure("replay.death_snapshot", () =>
-            {
-                var snap = _sampler.SnapshotForDeath(victim.Slot);
-                frames = snap.Frames.Length == 0 ? null : snap.Frames;
-                events = snap.Events;
-                killerSnap = TryBuildKillerSnapshot(@event);
-            });
+            _perf.Measure(
+                "replay.death_snapshot",
+                () =>
+                {
+                    var snap = _sampler.SnapshotForDeath(victim.Slot);
+                    frames = snap.Frames.Length == 0 ? null : snap.Frames;
+                    events = snap.Events;
+                    killerSnap = TryBuildKillerSnapshot(@event);
+                }
+            );
         }
 
         // Captured unconditionally — respawn-at-death is independent of the
@@ -183,8 +220,10 @@ public partial class PostmortemPlugin : BasePlugin
         {
             var origin = victimPawn.AbsOrigin;
             var eyes = victimPawn.EyeAngles;
-            if (origin is not null) deathPos = new Vector(origin.X, origin.Y, origin.Z);
-            if (eyes is not null) deathAngles = new QAngle(eyes.X, eyes.Y, eyes.Z);
+            if (origin is not null)
+                deathPos = new Vector(origin.X, origin.Y, origin.Z);
+            if (eyes is not null)
+                deathAngles = new QAngle(eyes.X, eyes.Y, eyes.Z);
         }
 
         var entry = new DeathEntry(
@@ -195,34 +234,41 @@ public partial class PostmortemPlugin : BasePlugin
             Events: events,
             KillerAt: killerSnap,
             DeathPosition: deathPos,
-            DeathAngles: deathAngles);
+            DeathAngles: deathAngles
+        );
         _stack.Push(entry, CvMaxDeathsStored.Value);
 
         if (_stack.Evictions > 0 && _stack.Count == CvMaxDeathsStored.Value)
         {
             // One-line warning per eviction — if this spams, raise the cap.
             Logger.LogWarning(
-                "Postmortem: stack eviction — oldest DeathEntry dropped (cap={Cap} reached, evictions={E}). " +
-                "Raise pm_max_deaths_stored or consume with !pmres/!pmresevent more aggressively.",
-                CvMaxDeathsStored.Value, _stack.Evictions);
+                "Postmortem: stack eviction — oldest DeathEntry dropped (cap={Cap} reached, evictions={E}). "
+                    + "Raise pm_max_deaths_stored or consume with !pmres/!pmresevent more aggressively.",
+                CvMaxDeathsStored.Value,
+                _stack.Evictions
+            );
         }
 
         Logger.LogInformation(
             "Postmortem: death_push slot={Slot} name={Name} frames={Frames} events={Events} killer={Killer} stackCount={Count}",
-            victim.Slot, victimName,
+            victim.Slot,
+            victimName,
             frames?.Length ?? 0,
             events?.Count ?? 0,
             killerSnap?.KillerName ?? "-",
-            _stack.Count);
+            _stack.Count
+        );
         return HookResult.Continue;
     }
 
     private KillerSnapshot? TryBuildKillerSnapshot(EventPlayerDeath @event)
     {
         var attacker = @event.Attacker;
-        if (attacker is null || !attacker.IsValid) return null;
+        if (attacker is null || !attacker.IsValid)
+            return null;
         var pawn = attacker.PlayerPawn?.Value;
-        if (pawn is null) return null;
+        if (pawn is null)
+            return null;
         var pos = pawn.AbsOrigin ?? Vector.Zero;
         var rot = pawn.AbsRotation ?? QAngle.Zero;
         var eye = pawn.EyeAngles ?? QAngle.Zero;
@@ -231,7 +277,9 @@ public partial class PostmortemPlugin : BasePlugin
         {
             modelName = pawn.CBodyComponent?.SceneNode?.GetSkeletonInstance()?.ModelState.ModelName;
         }
-        catch { /* best-effort */ }
+        catch
+        { /* best-effort */
+        }
         return new KillerSnapshot(
             KillerSteamId: attacker.SteamID,
             KillerSlot: attacker.Slot,
@@ -243,12 +291,14 @@ public partial class PostmortemPlugin : BasePlugin
             Weapon: _intern.Intern(@event.Weapon) ?? "unknown",
             HitGroup: (byte)@event.Hitgroup,
             Damage: @event.DmgHealth,
-            KillerJbRoleFlags: 0);
+            KillerJbRoleFlags: 0
+        );
     }
 
     private void OnSamplerAfterTick()
     {
-        if (_activeReplay is null) return;
+        if (_activeReplay is null)
+            return;
         try
         {
             _activeReplay.Tick();
@@ -267,8 +317,13 @@ public partial class PostmortemPlugin : BasePlugin
 
     private void StopActiveReplay(string reason)
     {
-        if (_activeReplay is null) return;
-        Logger.LogInformation("Postmortem: replay_stop reason={Reason} eventId={Id}", reason, _activeReplay.EventId);
+        if (_activeReplay is null)
+            return;
+        Logger.LogInformation(
+            "Postmortem: replay_stop reason={Reason} eventId={Id}",
+            reason,
+            _activeReplay.EventId
+        );
         _activeReplay.Stop();
         _activeReplay = null;
     }
@@ -276,7 +331,11 @@ public partial class PostmortemPlugin : BasePlugin
     // ===== Commands =====
 
     [ConsoleCommand("css_pmres", "Respawn the last N individual dead players (default 1).")]
-    [CommandHelper(minArgs: 0, usage: "[count] [spawn|death]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+    [CommandHelper(
+        minArgs: 0,
+        usage: "[count] [spawn|death]",
+        whoCanExecute: CommandUsage.CLIENT_AND_SERVER
+    )]
     [RequiresPermissions("@css/generic")]
     public void OnCommandPmRes(CCSPlayerController? caller, CommandInfo info)
     {
@@ -289,7 +348,8 @@ public partial class PostmortemPlugin : BasePlugin
                 return;
             }
         }
-        if (!TryParseRespawnWhere(info, 2, out var atDeath, caller)) return;
+        if (!TryParseRespawnWhere(info, 2, out var atDeath, caller))
+            return;
 
         var popped = _stack.PopLastN(count);
         if (popped.Count == 0)
@@ -303,9 +363,21 @@ public partial class PostmortemPlugin : BasePlugin
         foreach (var e in popped)
         {
             var c = Utilities.GetPlayerFromSlot(e.Slot);
-            if (c is null || !c.IsValid) { skipped++; continue; }
-            if (c.PawnIsAlive) { skipped++; continue; }
-            if (c.Team != CsTeam.Terrorist && c.Team != CsTeam.CounterTerrorist) { skipped++; continue; }
+            if (c is null || !c.IsValid)
+            {
+                skipped++;
+                continue;
+            }
+            if (c.PawnIsAlive)
+            {
+                skipped++;
+                continue;
+            }
+            if (c.Team != CsTeam.Terrorist && c.Team != CsTeam.CounterTerrorist)
+            {
+                skipped++;
+                continue;
+            }
             RespawnAt(c, e, atDeath);
             names.Add(c.PlayerName ?? $"slot {e.Slot}");
         }
@@ -317,11 +389,20 @@ public partial class PostmortemPlugin : BasePlugin
         if (names.Count == 0)
             Reply(caller, info, ChatColors.Yellow, Localizer["pm.res.partial", popped.Count]);
         else
-            Reply(caller, info, ChatColors.Green,
-                Localizer["pm.res.ok", names.Count, popped.Count, string.Join(", ", names)]);
+            Reply(
+                caller,
+                info,
+                ChatColors.Green,
+                Localizer["pm.res.ok", names.Count, popped.Count, string.Join(", ", names)]
+            );
         Logger.LogInformation(
             "Postmortem: pmres popped={Popped} respawned={Respawned} skipped={Skipped} requested={Req} atDeath={At}",
-            popped.Count, names.Count, skipped, count, atDeath);
+            popped.Count,
+            names.Count,
+            skipped,
+            count,
+            atDeath
+        );
     }
 
     [ConsoleCommand("css_pmevents", "List recent death-events with #IDs.")]
@@ -341,14 +422,15 @@ public partial class PostmortemPlugin : BasePlugin
         var now = DateTime.UtcNow;
         var lines = new List<string>
         {
-            Localizer["pm.events.header", groups.Count, gap.ToString("F1")]
+            Localizer["pm.events.header", groups.Count, gap.ToString("F1")],
         };
         for (var i = 0; i < groups.Count; i++)
         {
             var g = groups[i];
             // newest → oldest within the group; names in chronological order.
             var victimNames = new List<string>(g.Count);
-            for (var k = g.Count - 1; k >= 0; k--) victimNames.Add(g[k].VictimName);
+            for (var k = g.Count - 1; k >= 0; k--)
+                victimNames.Add(g[k].VictimName);
             var newestAt = g[0].At;
             var oldestAt = g[^1].At;
             var ago = FormatAgo(now - newestAt);
@@ -358,7 +440,9 @@ public partial class PostmortemPlugin : BasePlugin
             else
             {
                 var duration = (newestAt - oldestAt).TotalSeconds.ToString("F1");
-                lines.Add(Localizer["pm.events.row_many", i + 1, ago, g.Count, duration, victimsLabel]);
+                lines.Add(
+                    Localizer["pm.events.row_many", i + 1, ago, g.Count, duration, victimsLabel]
+                );
             }
         }
         ReplyLines(caller, info, "events", lines);
@@ -366,7 +450,11 @@ public partial class PostmortemPlugin : BasePlugin
 
     [ConsoleCommand("css_pmresevent", "Respawn everyone in event #id.")]
     [ConsoleCommand("css_pmre", "Alias of !pmresevent.")]
-    [CommandHelper(minArgs: 1, usage: "<event_id> [spawn|death]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+    [CommandHelper(
+        minArgs: 1,
+        usage: "<event_id> [spawn|death]",
+        whoCanExecute: CommandUsage.CLIENT_AND_SERVER
+    )]
     [RequiresPermissions("@css/generic")]
     public void OnCommandPmResEvent(CCSPlayerController? caller, CommandInfo info)
     {
@@ -375,7 +463,8 @@ public partial class PostmortemPlugin : BasePlugin
             Reply(caller, info, ChatColors.Red, Localizer["pm.event.bad_id"]);
             return;
         }
-        if (!TryParseRespawnWhere(info, 2, out var atDeath, caller)) return;
+        if (!TryParseRespawnWhere(info, 2, out var atDeath, caller))
+            return;
 
         var popped = _stack.PopGroup(id - 1, CvGroupGap.Value);
         if (popped.Count == 0)
@@ -388,9 +477,12 @@ public partial class PostmortemPlugin : BasePlugin
         foreach (var e in popped)
         {
             var c = Utilities.GetPlayerFromSlot(e.Slot);
-            if (c is null || !c.IsValid) continue;
-            if (c.PawnIsAlive) continue;
-            if (c.Team != CsTeam.Terrorist && c.Team != CsTeam.CounterTerrorist) continue;
+            if (c is null || !c.IsValid)
+                continue;
+            if (c.PawnIsAlive)
+                continue;
+            if (c.Team != CsTeam.Terrorist && c.Team != CsTeam.CounterTerrorist)
+                continue;
             RespawnAt(c, e, atDeath);
             names.Add(c.PlayerName ?? $"slot {e.Slot}");
         }
@@ -398,27 +490,53 @@ public partial class PostmortemPlugin : BasePlugin
         MaybeCancelReplayForEntries(popped);
 
         if (names.Count == 0)
-            Reply(caller, info, ChatColors.Yellow,
-                Localizer["pm.resevent.partial", popped.Count, id]);
+            Reply(
+                caller,
+                info,
+                ChatColors.Yellow,
+                Localizer["pm.resevent.partial", popped.Count, id]
+            );
         else
-            Reply(caller, info, ChatColors.Green,
-                Localizer["pm.resevent.ok", names.Count, popped.Count, id, string.Join(", ", names)]);
-        Logger.LogInformation("Postmortem: pmresevent id={Id} popped={Popped} respawned={R} atDeath={At}",
-            id, popped.Count, names.Count, atDeath);
+            Reply(
+                caller,
+                info,
+                ChatColors.Green,
+                Localizer["pm.resevent.ok", names.Count, popped.Count, id, string.Join(", ", names)]
+            );
+        Logger.LogInformation(
+            "Postmortem: pmresevent id={Id} popped={Popped} respawned={R} atDeath={At}",
+            id,
+            popped.Count,
+            names.Count,
+            atDeath
+        );
     }
 
     // Parses the optional `spawn|death` trailing arg shared by !pmres and
     // !pmresevent. Returns true when the arg is absent or valid (atDeath set);
     // false + error message to caller when invalid.
-    private bool TryParseRespawnWhere(CommandInfo info, int argIndex, out bool atDeath, CCSPlayerController? caller)
+    private bool TryParseRespawnWhere(
+        CommandInfo info,
+        int argIndex,
+        out bool atDeath,
+        CCSPlayerController? caller
+    )
     {
         atDeath = false;
-        if (info.ArgCount <= argIndex) return true;
+        if (info.ArgCount <= argIndex)
+            return true;
         var arg = info.GetArg(argIndex).ToLowerInvariant();
         switch (arg)
         {
-            case "spawn": case "team":   atDeath = false; return true;
-            case "death": case "here": case "at": atDeath = true; return true;
+            case "spawn":
+            case "team":
+                atDeath = false;
+                return true;
+            case "death":
+            case "here":
+            case "at":
+                atDeath = true;
+                return true;
             default:
                 Reply(caller, info, ChatColors.Red, Localizer["pm.res.bad_where"]);
                 return false;
@@ -431,15 +549,22 @@ public partial class PostmortemPlugin : BasePlugin
     private void RespawnAt(CCSPlayerController c, DeathEntry entry, bool atDeath)
     {
         c.Respawn();
-        if (!atDeath || entry.DeathPosition is null) return;
+        if (!atDeath || entry.DeathPosition is null)
+            return;
         var pos = entry.DeathPosition;
-        var ang = entry.DeathAngles ?? QAngle.Zero;
+        // Body yaw only — DeathAngles comes from EyeAngles which carries
+        // pitch (look up/down) and sometimes roll. Feeding those into pawn
+        // Teleport bends the model. Y is the heading the player was facing;
+        // that's all the body needs.
+        var bodyYaw = new QAngle(0f, (entry.DeathAngles ?? QAngle.Zero).Y, 0f);
         Server.NextFrame(() =>
         {
-            if (!c.IsValid) return;
+            if (!c.IsValid)
+                return;
             var pawn = c.PlayerPawn?.Value;
-            if (pawn is null || !pawn.IsValid) return;
-            pawn.Teleport(pos, ang, Vector.Zero);
+            if (pawn is null || !pawn.IsValid)
+                return;
+            pawn.Teleport(pos, bodyYaw, Vector.Zero);
         });
     }
 
@@ -476,9 +601,16 @@ public partial class PostmortemPlugin : BasePlugin
         ReplyLines(caller, info, "deaths", lines);
     }
 
-    [ConsoleCommand("css_pmreplay", "Play back individual death #id or the newest death matching <name>.")]
+    [ConsoleCommand(
+        "css_pmreplay",
+        "Play back individual death #id or the newest death matching <name>."
+    )]
     [ConsoleCommand("css_pmr", "Alias of !pmreplay.")]
-    [CommandHelper(minArgs: 0, usage: "[death_id|name]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+    [CommandHelper(
+        minArgs: 0,
+        usage: "[death_id|name]",
+        whoCanExecute: CommandUsage.CLIENT_AND_SERVER
+    )]
     [RequiresPermissions("@css/generic")]
     public void OnCommandPmReplay(CCSPlayerController? caller, CommandInfo info)
     {
@@ -501,7 +633,12 @@ public partial class PostmortemPlugin : BasePlugin
             var needle = info.GetArg(1);
             if (!TryFindDeathByName(snap, needle, out id))
             {
-                Reply(caller, info, ChatColors.Yellow, Localizer["pm.replay.no_name_match", needle]);
+                Reply(
+                    caller,
+                    info,
+                    ChatColors.Yellow,
+                    Localizer["pm.replay.no_name_match", needle]
+                );
                 return;
             }
         }
@@ -524,24 +661,40 @@ public partial class PostmortemPlugin : BasePlugin
 
         var members = new[] { entry };
         StopActiveReplay(reason: "new_replay");
-        _activeReplay = new MovementReplay(id, members, Logger, FormatReplayKillLine,
+        _activeReplay = new MovementReplay(
+            id,
+            members,
+            Logger,
+            FormatReplayKillLine,
             lingerSeconds: () => CvReplayLinger.Value,
-            formatShotLine: FormatReplayShotLine);
+            formatShotLine: FormatReplayShotLine
+        );
         var windowSec = MaxWindowSeconds(members);
-        Reply(caller, info, ChatColors.Green,
-            Localizer["pm.replay.started", id, entry.VictimName, windowSec.ToString("F1")]);
-        Logger.LogInformation("Postmortem: replay_start deathId={Id} victim={V}",
-            id, entry.VictimName);
+        Reply(
+            caller,
+            info,
+            ChatColors.Green,
+            Localizer["pm.replay.started", id, entry.VictimName, windowSec.ToString("F1")]
+        );
+        Logger.LogInformation(
+            "Postmortem: replay_start deathId={Id} victim={V}",
+            id,
+            entry.VictimName
+        );
     }
 
     // Newest-first match of `needle` against victim names. Returns the 1-based
     // death id of the first entry containing a match, so the caller can re-use
     // the existing id code path.
     private static bool TryFindDeathByName(
-        IReadOnlyList<DeathEntry> snapNewestFirst, string needle, out int deathId)
+        IReadOnlyList<DeathEntry> snapNewestFirst,
+        string needle,
+        out int deathId
+    )
     {
         deathId = 0;
-        if (string.IsNullOrWhiteSpace(needle)) return false;
+        if (string.IsNullOrWhiteSpace(needle))
+            return false;
         for (var i = 0; i < snapNewestFirst.Count; i++)
         {
             if (snapNewestFirst[i].VictimName.Contains(needle, StringComparison.OrdinalIgnoreCase))
@@ -553,11 +706,15 @@ public partial class PostmortemPlugin : BasePlugin
         return false;
     }
 
-    [ConsoleCommand("css_fk", "Flag the caller's most recent death as a freekill; staff get the replay command in chat.")]
+    [ConsoleCommand(
+        "css_fk",
+        "Flag the caller's most recent death as a freekill; staff get the replay command in chat."
+    )]
     [CommandHelper(minArgs: 0, whoCanExecute: CommandUsage.CLIENT_ONLY)]
     public void OnCommandFk(CCSPlayerController? caller, CommandInfo info)
     {
-        if (caller is null || !caller.IsValid) return;
+        if (caller is null || !caller.IsValid)
+            return;
         HandleFkComplaint(caller, replyToCommand: info);
     }
 
@@ -583,8 +740,12 @@ public partial class PostmortemPlugin : BasePlugin
                 // shouldn't learn they're being filtered. Explicit command
                 // callers do get told.
                 if (replyToCommand is not null)
-                    Reply(caller, replyToCommand, ChatColors.Yellow,
-                        Localizer["pm.fk.cooldown", (int)Math.Ceiling(cooldown - elapsed)]);
+                    Reply(
+                        caller,
+                        replyToCommand,
+                        ChatColors.Yellow,
+                        Localizer["pm.fk.cooldown", (int)Math.Ceiling(cooldown - elapsed)]
+                    );
                 return;
             }
         }
@@ -624,8 +785,10 @@ public partial class PostmortemPlugin : BasePlugin
         var notified = 0;
         foreach (var p in Utilities.GetPlayers())
         {
-            if (p is null || !p.IsValid || p.IsBot) continue;
-            if (!AdminManager.PlayerHasPermissions(p, "@css/generic")) continue;
+            if (p is null || !p.IsValid || p.IsBot)
+                continue;
+            if (!AdminManager.PlayerHasPermissions(p, "@css/generic"))
+                continue;
             p.PrintToChat(alertLine);
             notified++;
         }
@@ -635,23 +798,33 @@ public partial class PostmortemPlugin : BasePlugin
         if (replyToCommand is not null)
             Reply(caller, replyToCommand, ChatColors.Green, Localizer["pm.fk.thanks", notified]);
         else
-            caller.PrintToChat($"{ChatPrefixColored} {ChatColors.Green}{Localizer["pm.fk.thanks", notified]}{ChatColors.Default}");
+            caller.PrintToChat(
+                $"{ChatPrefixColored} {ChatColors.Green}{Localizer["pm.fk.thanks", notified]}{ChatColors.Default}"
+            );
 
         Logger.LogInformation(
             "Postmortem: fk_complaint caller={Caller} deathId={Id} killer={Killer} notifiedAdmins={N}",
-            victimName, deathId, killer?.KillerName ?? "-", notified);
+            victimName,
+            deathId,
+            killer?.KillerName ?? "-",
+            notified
+        );
     }
 
     private HookResult OnChatSay(CCSPlayerController? player, CommandInfo info)
     {
-        if (player is null || !player.IsValid || player.IsBot) return HookResult.Continue;
+        if (player is null || !player.IsValid || player.IsBot)
+            return HookResult.Continue;
         var message = info.GetArg(1);
-        if (string.IsNullOrEmpty(message)) return HookResult.Continue;
+        if (string.IsNullOrEmpty(message))
+            return HookResult.Continue;
         // Chat-command prefixes are routed by CSSharp's command dispatcher —
         // !fk already goes through OnCommandFk. Skip keyword scanning so a
         // user typing !fk doesn't double-trigger.
-        if (message[0] is '!' or '/' or '.') return HookResult.Continue;
-        if (!IsFreekillKeyword(message)) return HookResult.Continue;
+        if (message[0] is '!' or '/' or '.')
+            return HookResult.Continue;
+        if (!IsFreekillKeyword(message))
+            return HookResult.Continue;
         HandleFkComplaint(player, replyToCommand: null);
         return HookResult.Continue;
     }
@@ -660,12 +833,19 @@ public partial class PostmortemPlugin : BasePlugin
     // "luck" or "talk" don't. Case-insensitive.
     private static bool IsFreekillKeyword(string msg)
     {
-        if (string.IsNullOrWhiteSpace(msg)) return false;
-        foreach (var token in msg.Split(new[] { ' ', '\t', ',', '.', '!', '?' },
-            StringSplitOptions.RemoveEmptyEntries))
+        if (string.IsNullOrWhiteSpace(msg))
+            return false;
+        foreach (
+            var token in msg.Split(
+                new[] { ' ', '\t', ',', '.', '!', '?' },
+                StringSplitOptions.RemoveEmptyEntries
+            )
+        )
         {
-            if (string.Equals(token, "fk", StringComparison.OrdinalIgnoreCase)) return true;
-            if (string.Equals(token, "freekill", StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(token, "fk", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (string.Equals(token, "freekill", StringComparison.OrdinalIgnoreCase))
+                return true;
         }
         return false;
     }
@@ -688,8 +868,8 @@ public partial class PostmortemPlugin : BasePlugin
 
     // Called from MovementReplay when the kill shot hits — localizes the chat
     // line so replay announcements match the caller's language.
-    private string FormatReplayKillLine(string killer, string victim, string weapon)
-        => $"{ChatPrefixColored} {Localizer["pm.replay.killshot", killer, victim, weapon]}";
+    private string FormatReplayKillLine(string killer, string victim, string weapon) =>
+        $"{ChatPrefixColored} {Localizer["pm.replay.killshot", killer, victim, weapon]}";
 
     // Called from MovementReplay when the T switches weapon during playback.
     // Branches by weapon-name category (melee / grenade / firearm) to pick the
@@ -700,20 +880,24 @@ public partial class PostmortemPlugin : BasePlugin
     private string FormatReplayShotLine(string actor, string weapon)
     {
         var label = weapon.StartsWith("weapon_", StringComparison.Ordinal)
-            ? weapon["weapon_".Length..] : weapon;
+            ? weapon["weapon_".Length..]
+            : weapon;
         string key;
-        if (IsMeleeWeapon(weapon)) key = "pm.replay.swung_knife";
-        else if (IsGrenade(weapon)) key = "pm.replay.threw";
-        else key = "pm.replay.fired";
+        if (IsMeleeWeapon(weapon))
+            key = "pm.replay.swung_knife";
+        else if (IsGrenade(weapon))
+            key = "pm.replay.threw";
+        else
+            key = "pm.replay.fired";
         return $"{ChatPrefixColored} {Localizer[key, actor, label]}";
     }
 
-    private static bool IsMeleeWeapon(string designerName)
-        => designerName.Contains("knife", StringComparison.Ordinal)
+    private static bool IsMeleeWeapon(string designerName) =>
+        designerName.Contains("knife", StringComparison.Ordinal)
         || designerName.Contains("bayonet", StringComparison.Ordinal);
 
-    private static bool IsGrenade(string designerName)
-        => designerName.Contains("grenade", StringComparison.Ordinal)
+    private static bool IsGrenade(string designerName) =>
+        designerName.Contains("grenade", StringComparison.Ordinal)
         || designerName.Contains("molotov", StringComparison.Ordinal)
         || designerName.Contains("flashbang", StringComparison.Ordinal)
         || designerName.Contains("decoy", StringComparison.Ordinal)
@@ -731,7 +915,7 @@ public partial class PostmortemPlugin : BasePlugin
         foreach (var e in _stack.SnapshotNewestFirst())
             stackFrames += e.MovementHistory?.Length ?? 0;
 
-        const int frameBytes = 72;  // rough per-reference size incl. two strings + two Vectors + QAngles
+        const int frameBytes = 72; // rough per-reference size incl. two strings + two Vectors + QAngles
         var stackKb = stackFrames * frameBytes / 1024;
         var liveKb = liveStats.TotalFrames * frameBytes / 1024;
 
@@ -747,7 +931,11 @@ public partial class PostmortemPlugin : BasePlugin
 
     [ConsoleCommand("css_pmrecording", "Toggle pm_replay_enabled (on|off|toggle).")]
     [ConsoleCommand("css_pmrec", "Alias of !pmrecording.")]
-    [CommandHelper(minArgs: 0, usage: "[on|off|toggle]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+    [CommandHelper(
+        minArgs: 0,
+        usage: "[on|off|toggle]",
+        whoCanExecute: CommandUsage.CLIENT_AND_SERVER
+    )]
     [RequiresPermissions("@css/generic")]
     public void OnCommandPmRecording(CCSPlayerController? caller, CommandInfo info)
     {
@@ -755,16 +943,26 @@ public partial class PostmortemPlugin : BasePlugin
         bool newState = CvReplayEnabled.Value;
         switch (arg)
         {
-            case "on":     newState = true; break;
-            case "off":    newState = false; break;
-            case "toggle": newState = !CvReplayEnabled.Value; break;
+            case "on":
+                newState = true;
+                break;
+            case "off":
+                newState = false;
+                break;
+            case "toggle":
+                newState = !CvReplayEnabled.Value;
+                break;
             default:
                 Reply(caller, info, ChatColors.Red, Localizer["pm.recording.bad_arg"]);
                 return;
         }
         CvReplayEnabled.Value = newState;
-        Reply(caller, info, newState ? ChatColors.Green : ChatColors.Yellow,
-            Localizer[newState ? "pm.recording.on" : "pm.recording.off"]);
+        Reply(
+            caller,
+            info,
+            newState ? ChatColors.Green : ChatColors.Yellow,
+            Localizer[newState ? "pm.recording.on" : "pm.recording.off"]
+        );
         Logger.LogInformation("Postmortem: pm_replay_enabled set to {State}", newState);
     }
 
@@ -788,14 +986,16 @@ public partial class PostmortemPlugin : BasePlugin
         for (var i = 0; i < snap.Count; i++)
         {
             var e = snap[i];
-            if (anchor is null) anchor = e.At;
+            if (anchor is null)
+                anchor = e.At;
             else if ((anchor.Value - e.At).TotalSeconds > gap)
             {
                 lines.Add("  ---");
                 groupIdx++;
                 anchor = e.At;
             }
-            else anchor = e.At;
+            else
+                anchor = e.At;
 
             var c = Utilities.GetPlayerFromSlot(e.Slot);
             var name = c?.PlayerName ?? e.VictimName;
@@ -805,7 +1005,9 @@ public partial class PostmortemPlugin : BasePlugin
             var events = e.Events?.Count ?? 0;
             var killer = e.KillerAt?.KillerName ?? "-";
             var pos = e.DeathPosition is { } p ? $"({p.X:F0},{p.Y:F0},{p.Z:F0})" : "-";
-            lines.Add($"  g{groupIdx} [{i}] slot={e.Slot} name={name} age={age:F1}s ({alive}) frames={frames} events={events} killer={killer} deathpos={pos}");
+            lines.Add(
+                $"  g{groupIdx} [{i}] slot={e.Slot} name={name} age={age:F1}s ({alive}) frames={frames} events={events} killer={killer} deathpos={pos}"
+            );
         }
         ReplyLines(caller, info, "stack", lines);
     }
@@ -819,9 +1021,15 @@ public partial class PostmortemPlugin : BasePlugin
         var name = info.GetArg(1);
         foreach (var c in Utilities.GetPlayers())
         {
-            if (c is null || !c.IsValid || !c.IsBot) continue;
-            if (!string.Equals(c.PlayerName, name, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!c.PawnIsAlive) { info.ReplyToCommand($"{ChatPrefixPlain} {name} already dead"); return; }
+            if (c is null || !c.IsValid || !c.IsBot)
+                continue;
+            if (!string.Equals(c.PlayerName, name, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!c.PawnIsAlive)
+            {
+                info.ReplyToCommand($"{ChatPrefixPlain} {name} already dead");
+                return;
+            }
             c.CommitSuicide(explode: false, force: true);
             info.ReplyToCommand($"{ChatPrefixPlain} killed {name} (slot {c.Slot})");
             return;
@@ -835,7 +1043,8 @@ public partial class PostmortemPlugin : BasePlugin
     public void OnCommandPmPerfBench(CCSPlayerController? caller, CommandInfo info)
     {
         var players = new List<CCSPlayerController>();
-        foreach (var entry in _cache.AliveCombatants()) players.Add(entry.Controller);
+        foreach (var entry in _cache.AliveCombatants())
+            players.Add(entry.Controller);
 
         var iterations = 10_000;
         var sw = Stopwatch.StartNew();
@@ -845,21 +1054,31 @@ public partial class PostmortemPlugin : BasePlugin
             if (players.Count == 0)
             {
                 // No-op workload — still exercises PerfTracker plumbing.
-                _perf.Measure("replay.bench.nop", () => { samplesTaken++; });
+                _perf.Measure(
+                    "replay.bench.nop",
+                    () =>
+                    {
+                        samplesTaken++;
+                    }
+                );
                 continue;
             }
             var p = players[i % players.Count];
-            _perf.Measure("replay.bench.one_player", () =>
-            {
-                var pawn = p.PlayerPawn?.Value;
-                if (pawn is null) return;
-                var _loc = pawn.AbsOrigin ?? Vector.Zero;
-                var _eye = pawn.EyeAngles ?? QAngle.Zero;
-                var _rot = pawn.AbsRotation ?? QAngle.Zero;
-                var _vel = pawn.AbsVelocity ?? Vector.Zero;
-                var _dn = pawn.WeaponServices?.ActiveWeapon?.Value?.DesignerName;
-                samplesTaken++;
-            });
+            _perf.Measure(
+                "replay.bench.one_player",
+                () =>
+                {
+                    var pawn = p.PlayerPawn?.Value;
+                    if (pawn is null)
+                        return;
+                    var _loc = pawn.AbsOrigin ?? Vector.Zero;
+                    var _eye = pawn.EyeAngles ?? QAngle.Zero;
+                    var _rot = pawn.AbsRotation ?? QAngle.Zero;
+                    var _vel = pawn.AbsVelocity ?? Vector.Zero;
+                    var _dn = pawn.WeaponServices?.ActiveWeapon?.Value?.DesignerName;
+                    samplesTaken++;
+                }
+            );
         }
         sw.Stop();
 
@@ -871,7 +1090,9 @@ public partial class PostmortemPlugin : BasePlugin
             $"bench: iterations={iterations} players={players.Count} total={sw.ElapsedMilliseconds} ms  ~{nsPerOp:F0} ns/op",
         };
         if (stats is not null)
-            lines.Add($"  op={stats.OpName} n={stats.Count} p50={stats.P50Micros}µs p95={stats.P95Micros}µs p99={stats.P99Micros}µs max={stats.MaxMicros}µs");
+            lines.Add(
+                $"  op={stats.OpName} n={stats.Count} p50={stats.P50Micros}µs p95={stats.P95Micros}µs p99={stats.P99Micros}µs max={stats.MaxMicros}µs"
+            );
         ReplyLines(caller, info, "bench", lines);
     }
 
@@ -881,12 +1102,18 @@ public partial class PostmortemPlugin : BasePlugin
     public void OnCommandPmReplayStatus(CCSPlayerController? caller, CommandInfo info)
     {
         var lines = new List<string>();
-        if (_activeReplay is null) lines.Add("no active replay");
-        else lines.Add($"active replay: eventId={_activeReplay.EventId} members={_activeReplay.MemberCount} frame={_activeReplay.CurrentFrame}/{_activeReplay.TotalFrames}");
+        if (_activeReplay is null)
+            lines.Add("no active replay");
+        else
+            lines.Add(
+                $"active replay: eventId={_activeReplay.EventId} members={_activeReplay.MemberCount} frame={_activeReplay.CurrentFrame}/{_activeReplay.TotalFrames}"
+            );
 
         var stats = _perf.Snapshot(reset: false);
         foreach (var s in stats)
-            lines.Add($"  perf {s.OpName} n={s.Count} p50={s.P50Micros}µs p95={s.P95Micros}µs p99={s.P99Micros}µs max={s.MaxMicros}µs dropped={s.DroppedSamples}");
+            lines.Add(
+                $"  perf {s.OpName} n={s.Count} p50={s.P50Micros}µs p95={s.P95Micros}µs p99={s.P99Micros}µs max={s.MaxMicros}µs dropped={s.DroppedSamples}"
+            );
 
         ReplyLines(caller, info, "status", lines);
     }
@@ -895,7 +1122,8 @@ public partial class PostmortemPlugin : BasePlugin
 
     private void MaybeCancelReplayForEntries(IReadOnlyList<DeathEntry> entries)
     {
-        if (_activeReplay is null) return;
+        if (_activeReplay is null)
+            return;
         // Consume-wins: cancel if any consumed entry belonged to the active
         // replay's members.
         foreach (var e in entries)
@@ -916,10 +1144,12 @@ public partial class PostmortemPlugin : BasePlugin
         foreach (var e in group)
         {
             var frames = e.MovementHistory;
-            if (frames is null || frames.Length == 0) continue;
+            if (frames is null || frames.Length == 0)
+                continue;
             var first = frames[0].TimeSinceRoundStart;
             var last = frames[^1].TimeSinceRoundStart;
-            if (last - first > max) max = last - first;
+            if (last - first > max)
+                max = last - first;
         }
         return max;
     }
@@ -927,18 +1157,27 @@ public partial class PostmortemPlugin : BasePlugin
     private string FormatAgo(TimeSpan span)
     {
         var s = span.TotalSeconds;
-        if (s < 5) return Localizer["pm.ago.just_now"];
-        if (s < 60) return Localizer["pm.ago.seconds", (int)s];
-        if (s < 3600) return Localizer["pm.ago.minutes", (int)(s / 60)];
+        if (s < 5)
+            return Localizer["pm.ago.just_now"];
+        if (s < 60)
+            return Localizer["pm.ago.seconds", (int)s];
+        if (s < 3600)
+            return Localizer["pm.ago.minutes", (int)(s / 60)];
         return Localizer["pm.ago.hours", (int)(s / 3600)];
     }
 
     // Single source of truth for the chat-line tag. Coloured form goes to
     // chat, plain form goes to console so log files stay readable.
-    public string ChatPrefixColored => $" {ChatColors.Green}[{CvChatPrefix.Value}]{ChatColors.Default}";
+    public string ChatPrefixColored =>
+        $" {ChatColors.Green}[{CvChatPrefix.Value}]{ChatColors.Default}";
     public string ChatPrefixPlain => $"[{CvChatPrefix.Value}]";
 
-    private void ReplyLines(CCSPlayerController? target, CommandInfo info, string kind, IEnumerable<string> lines)
+    private void ReplyLines(
+        CCSPlayerController? target,
+        CommandInfo info,
+        string kind,
+        IEnumerable<string> lines
+    )
     {
         // Route once: chat when called from a player, console when called from
         // RCON/server. `info.ReplyToCommand` for a chat-invoked command would
