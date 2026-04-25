@@ -43,6 +43,7 @@
   "pm.recording.on": "recording: ON",
   "pm.recording.off": "recording: OFF",
 
+  "pm.fk.alive": "You're still alive — only dead players can complain",
   "pm.fk.no_death": "You haven't died recently",
   "pm.fk.cooldown": "Wait {0}s before complaining again",
   "pm.fk.thanks": "Staff notified ({0})",

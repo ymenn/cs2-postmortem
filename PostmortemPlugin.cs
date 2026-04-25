@@ -726,6 +726,17 @@ public partial class PostmortemPlugin : BasePlugin
     // success — the "staff notified" ack printed to them directly).
     private void HandleFkComplaint(CCSPlayerController caller, CommandInfo? replyToCommand)
     {
+        // Freekill complaints are only meaningful immediately after dying —
+        // a living player typing !fk (or "fk" in chat) is either trolling or
+        // confused. Silent for chat-keyword triggers so we don't teach them
+        // they're being filtered; explicit !fk gets a one-line nudge.
+        if (caller.PawnIsAlive)
+        {
+            if (replyToCommand is not null)
+                Reply(caller, replyToCommand, ChatColors.Grey, Localizer["pm.fk.alive"]);
+            return;
+        }
+
         // Cooldown — prevents a single player from nuking staff chat.
         // Applies even when the user didn't type the command (keyword
         // detection feeds through here too), so repeated "fk fk fk" in chat

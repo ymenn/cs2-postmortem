@@ -43,6 +43,7 @@
   "pm.recording.on": "gravação: ON",
   "pm.recording.off": "gravação: OFF",
 
+  "pm.fk.alive": "Ainda estás vivo — só os mortos podem reclamar",
   "pm.fk.no_death": "Não morreste recentemente",
   "pm.fk.cooldown": "Espera {0}s antes de reclamar outra vez",
   "pm.fk.thanks": "Staff notificado ({0})",

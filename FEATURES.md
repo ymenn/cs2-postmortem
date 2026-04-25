@@ -95,7 +95,7 @@ All commands are `@css/generic`.
 
 | Command | Effect |
 |---|---|
-| `!fk` | Flag the caller's most recent death as a freekill; staff (`@css/generic`) get a chat alert with the exact `!pmr #id` command. Also triggered when a player types `fk` / `freekill` as a standalone word in chat. Per-caller cooldown (`pm_fk_cooldown_seconds`, default 30s). |
+| `!fk` | Flag the caller's most recent death as a freekill; staff (`@css/generic`) get a chat alert with the exact `!pmr #id` command. Also triggered when a player types `fk` / `freekill` as a standalone word in chat. Dead-only — living players are silently filtered (chat) or get a one-line nudge (command). Per-caller cooldown (`pm_fk_cooldown_seconds`, default 30s). |
 
 ### Debug (`@css/root`)
 
