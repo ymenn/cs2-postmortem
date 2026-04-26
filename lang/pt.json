@@ -57,5 +57,6 @@
   "pm.fk.alert_kill": "⚠ Queixa de freekill de {0} (morto por {1}) — {2}",
   "pm.fk.alert_no_killer": "⚠ Queixa de freekill de {0} — {1}",
 
-  "pm.event.alert": "⚠ Possível freekill: {0} terroristas mortos em sequência\n   Revê: {1}"
+  "pm.event.alert.warning": "⚠ Possível freekill: {0} terroristas mortos em sequência",
+  "pm.event.alert.action": "   Revê: {0}"
 }

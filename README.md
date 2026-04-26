@@ -22,7 +22,7 @@ Death `#id`s are stable within a round — they're assigned monotonically at kil
 | Command | Aliases | Effect |
 |---|---|---|
 | `!sres [count\|#id\|name] [spawn\|death]` | `!pmres` | Revive last N T deaths (default 1), specific death-id (any team), or newest name match. |
-| `!sresevent [event_id] [spawn\|death]` | `!pmresevent`, `!pmre` | Revive T members of an event (default: newest T event). |
+| `!sresevent [event_id] [spawn\|death]` | `!sresev`, `!pmresevent`, `!pmre` | Revive T members of an event (default: newest T event). |
 
 Default respawn location is the captured **death position** (with team-spawn fallback when none was captured). Append `spawn` (or `team`) to force a team spawn instead, or `death` (or `here` / `at`) to force the death position.
 

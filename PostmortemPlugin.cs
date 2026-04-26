@@ -435,7 +435,7 @@ public partial class PostmortemPlugin : BasePlugin
         string localized;
         if (_activeReplayIsEvent)
         {
-            var cmd = $"{ChatColors.LightYellow}!sresevent {_activeReplay.EventId}{ChatColors.Default}";
+            var cmd = $"{ChatColors.LightYellow}!sresev {_activeReplay.EventId}{ChatColors.Default}";
             localized = Localizer["pm.replayevent.ended", cmd];
         }
         else if (_activeReplaySingleEntry is { } entry)
@@ -656,6 +656,7 @@ public partial class PostmortemPlugin : BasePlugin
     }
 
     [ConsoleCommand("css_sresevent", "Respawn everyone in event #id (default: newest event).")]
+    [ConsoleCommand("css_sresev", "Alias of !sresevent.")]
     [ConsoleCommand("css_pmresevent", "Alias of !sresevent.")]
     [ConsoleCommand("css_pmre", "Alias of !sresevent.")]
     [CommandHelper(
@@ -1524,15 +1525,22 @@ public partial class PostmortemPlugin : BasePlugin
             if (e.VictimTeam == CsTeam.Terrorist) tCount++;
         if (tCount < threshold) return;
 
-        var cmd = $"{ChatColors.LightYellow}!replayevent {id}{ChatColors.Red}";
-        var alert = Localizer["pm.event.alert", tCount, cmd];
-        var alertLine = $"{ChatPrefixColored} {ChatColors.Red}{alert}{ChatColors.Default}";
+        // Two PrintToChat calls per admin: CS2 chat ignores embedded \n, so
+        // we split the alert into a "what happened" line and a "review with"
+        // line. This keeps the !replayevent command on its own line where it
+        // can't get cut by the chat-row wrap point.
+        var cmd = $"{ChatColors.LightYellow}!replayev {id}{ChatColors.Red}";
+        var warning = Localizer["pm.event.alert.warning", tCount];
+        var action = Localizer["pm.event.alert.action", cmd];
+        var warningLine = $"{ChatPrefixColored} {ChatColors.Red}{warning}{ChatColors.Default}";
+        var actionLine = $"{ChatPrefixColored} {ChatColors.Red}{action}{ChatColors.Default}";
         var notified = 0;
         foreach (var p in Utilities.GetPlayers())
         {
             if (p is null || !p.IsValid || p.IsBot) continue;
             if (!AdminManager.PlayerHasPermissions(p, "@css/generic")) continue;
-            p.PrintToChat(alertLine);
+            p.PrintToChat(warningLine);
+            p.PrintToChat(actionLine);
             notified++;
         }
         Logger.LogInformation(
