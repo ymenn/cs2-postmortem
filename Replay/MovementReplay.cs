@@ -24,17 +24,30 @@ public sealed class MovementReplay
     private readonly Func<float> _lingerSeconds;
 
     private readonly ILogger _logger;
-    private readonly Func<string, string, string, string> _formatKillLine;
+    // First float arg is seconds-since-replay-start so the formatter can
+    // prepend a `[+X.Xs]` timestamp — admins reading the replay chat want to
+    // see when each action happened relative to playback start.
+    private readonly Func<float, string, string, string, string> _formatKillLine;
     // Formatter for per-action chat lines ("T fired {weapon}", "T threw
     // {weapon}", "T swung a knife"). Called from AdvanceMember when we cross
     // an event boundary and the weapon differs from the last announced one.
-    private readonly Func<string, string, string>? _formatShotLine;
+    private readonly Func<float, string, string, string>? _formatShotLine;
     private readonly List<MemberChannel> _channels;
     private readonly DateTime _startedAt;
     private int _frameIndex;
     public bool IsPlaying { get; private set; } = true;
     public int EventId { get; }
     public int MemberCount => _channels.Count;
+    public int VictimCount
+    {
+        get
+        {
+            var n = 0;
+            foreach (var ch in _channels)
+                if (!ch.IsKillerCompanion) n++;
+            return n;
+        }
+    }
     public int CurrentFrame => _frameIndex;
     public int TotalFrames { get; }
 
@@ -78,9 +91,9 @@ public sealed class MovementReplay
         int eventId,
         IReadOnlyList<DeathEntry> members,
         ILogger logger,
-        Func<string, string, string, string> formatKillLine,
+        Func<float, string, string, string, string> formatKillLine,
         Func<float> lingerSeconds,
-        Func<string, string, string>? formatShotLine = null)
+        Func<float, string, string, string>? formatShotLine = null)
     {
         EventId = eventId;
         _logger = logger;
@@ -121,19 +134,55 @@ public sealed class MovementReplay
                     Frames = kFrames,
                     IsKillerCompanion = true,
                 });
-                victimCh.HasAnimatedKiller = true;
             }
         }
 
-        // End-align: every channel ends on _frameIndex == TotalFrames - 1, i.e.
-        // the same wall-clock kill moment. A shorter history → larger
-        // StartFrameDelay → spawns later in the replay.
-        var maxFrames = 0;
+        // Mark every victim whose killer is rendered as an animated companion,
+        // not just the first one we picked the companion off of. Without this
+        // pass, multi-victim events with one shared killer leave victims[1..]
+        // with HasAnimatedKiller=false, so FinishMember spawns the static
+        // killer-ghost on each of them — a leftover from the pre-companion
+        // rendering that shows up as a second CT prop popping in at each
+        // subsequent kill tick.
         foreach (var ch in _channels)
-            if (ch.Frames.Length > maxFrames) maxFrames = ch.Frames.Length;
-        TotalFrames = maxFrames;
+        {
+            if (ch.IsKillerCompanion) continue;
+            if (ch.Entry.KillerAt is { } k && killerSlotsAdded.Contains(k.KillerSlot))
+                ch.HasAnimatedKiller = true;
+        }
+
+        // Start-align: anchor on the earliest first-frame timestamp across all
+        // channels, then offset each channel by how much later its own first
+        // frame happened. Channels finish naturally when their own frames run
+        // out — earlier-killed victims despawn earlier in the replay, later
+        // victims later. Frame timestamps come from the sampler, so all
+        // channels share a sample rate; we derive the interval from the
+        // longest channel rather than reading the live ConVar so a mid-replay
+        // retune doesn't break the math.
+        var anchorTime = float.MaxValue;
         foreach (var ch in _channels)
-            ch.StartFrameDelay = maxFrames - ch.Frames.Length;
+            if (ch.Frames.Length > 0 && ch.Frames[0].TimeSinceRoundStart < anchorTime)
+                anchorTime = ch.Frames[0].TimeSinceRoundStart;
+
+        var refCh = _channels[0];
+        foreach (var ch in _channels)
+            if (ch.Frames.Length > refCh.Frames.Length) refCh = ch;
+        var sampleInterval = refCh.Frames.Length >= 2
+            ? Math.Max(0.001f,
+                (refCh.Frames[^1].TimeSinceRoundStart - refCh.Frames[0].TimeSinceRoundStart)
+                    / (refCh.Frames.Length - 1))
+            : 0.1f;  // 10 Hz fallback for a degenerate single-frame channel
+
+        var maxEnd = 0;
+        foreach (var ch in _channels)
+        {
+            if (ch.Frames.Length == 0) { ch.StartFrameDelay = 0; continue; }
+            var delaySec = ch.Frames[0].TimeSinceRoundStart - anchorTime;
+            ch.StartFrameDelay = Math.Max(0, (int)MathF.Round(delaySec / sampleInterval));
+            var end = ch.StartFrameDelay + ch.Frames.Length;
+            if (end > maxEnd) maxEnd = end;
+        }
+        TotalFrames = maxEnd;
     }
 
     private static void SpawnMember(MemberChannel ch)
@@ -248,6 +297,7 @@ public sealed class MovementReplay
     {
         if (!IsPlaying) return;
         var now = DateTime.UtcNow;
+        var elapsed = (float)(now - _startedAt).TotalSeconds;
         var anyAlive = false;
 
         foreach (var ch in _channels)
@@ -257,8 +307,8 @@ public sealed class MovementReplay
             var localFrame = _frameIndex - ch.StartFrameDelay;
             if (localFrame < 0)
             {
-                // Channel hasn't started yet — its history is shorter than the
-                // longest one so it begins partway into the replay.
+                // Channel hasn't started yet — its first frame is later than
+                // the earliest channel's so it begins partway into the replay.
                 anyAlive = true;
                 continue;
             }
@@ -273,12 +323,12 @@ public sealed class MovementReplay
             {
                 if (localFrame >= ch.Frames.Length)
                 {
-                    FinishMember(ch);
+                    FinishMember(ch, elapsed);
                 }
                 else
                 {
-                    AdvanceMember(ch, localFrame);
-                    if (localFrame == ch.Frames.Length - 1) FinishMember(ch);
+                    AdvanceMember(ch, localFrame, elapsed);
+                    if (localFrame == ch.Frames.Length - 1) FinishMember(ch, elapsed);
                 }
             }
 
@@ -294,14 +344,14 @@ public sealed class MovementReplay
         if (!anyAlive) IsPlaying = false;
     }
 
-    private void AdvanceMember(MemberChannel ch, int frameIdx)
+    private void AdvanceMember(MemberChannel ch, int frameIdx, float elapsed)
     {
         var frame = ch.Frames[frameIdx];
         // Victim's chat-line announcer (T fired AK / threw HE / swung knife).
         // Suppress for killer-companion channels — they don't carry a victim
         // event log, and "killer fired" lines would just clutter the feed.
         if (!ch.IsKillerCompanion)
-            MaybeAnnounceVictimActions(ch, frame.TimeSinceRoundStart);
+            MaybeAnnounceVictimActions(ch, frame.TimeSinceRoundStart, elapsed);
         var ghost = ch.Ghost;
         if (ghost is null || !ghost.IsValid) return;
 
@@ -363,7 +413,7 @@ public sealed class MovementReplay
     // burst fire don't spam). Melee swings and grenade throws also come
     // through as ShotFired (the recorder logs them all); formatting branches
     // in the plugin-level formatter by weapon-name category.
-    private void MaybeAnnounceVictimActions(MemberChannel ch, float frameAt)
+    private void MaybeAnnounceVictimActions(MemberChannel ch, float frameAt, float elapsed)
     {
         if (_formatShotLine is null) return;
         var events = ch.Entry.Events;
@@ -375,7 +425,7 @@ public sealed class MovementReplay
             {
                 if (!string.Equals(sf.Weapon, ch.LastAnnouncedWeapon, StringComparison.Ordinal))
                 {
-                    Server.PrintToChatAll(_formatShotLine(ch.Entry.VictimName, sf.Weapon));
+                    Server.PrintToChatAll(_formatShotLine(elapsed, ch.Entry.VictimName, sf.Weapon));
                     ch.LastAnnouncedWeapon = sf.Weapon;
                 }
             }
@@ -383,7 +433,7 @@ public sealed class MovementReplay
         }
     }
 
-    private void FinishMember(MemberChannel ch)
+    private void FinishMember(MemberChannel ch, float elapsed)
     {
         if (ch.Finished) return;
         ch.Finished = true;
@@ -422,7 +472,7 @@ public sealed class MovementReplay
                 var victimName = ch.Entry.VictimName;
                 var killerName = killer.KillerName;
                 var weaponLabel = string.IsNullOrEmpty(killer.Weapon) ? "?" : killer.Weapon;
-                Server.PrintToChatAll(_formatKillLine(killerName, victimName, weaponLabel));
+                Server.PrintToChatAll(_formatKillLine(elapsed, killerName, victimName, weaponLabel));
             }
             ch.KillShotDrawn = true;
         }

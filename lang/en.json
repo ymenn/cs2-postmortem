@@ -1,7 +1,7 @@
 {
-  "pm.res.bad_count": "count must be a positive integer",
-  "pm.res.bad_id": "death id (after #) must be a positive integer",
-  "pm.res.bad_where": "location must be 'spawn' or 'death' (default)",
+  "pm.res.bad_count": "Count must be a positive integer",
+  "pm.res.bad_id": "Death id (after #) must be a positive integer",
+  "pm.res.bad_where": "Location must be 'spawn' or 'death' (default)",
   "pm.res.empty": "No dead players to respawn",
   "pm.res.partial": "Respawned 0/{0} — all alive or disconnected",
   "pm.res.ok": "Respawned {0}/{1}: {2}",
@@ -23,7 +23,7 @@
   "pm.events.row_one": "  #{0} ({1}) 1 death: {2}",
   "pm.events.row_many": "  #{0} ({1}) {2} deaths in {3}s: {4}",
 
-  "pm.event.bad_id": "event id must be a positive integer",
+  "pm.event.bad_id": "Event id must be a positive integer",
   "pm.event.none": "No event #{0}",
 
   "pm.resevent.partial": "Respawned 0/{0} from event #{1} — all alive or disconnected",
@@ -32,7 +32,7 @@
   "pm.replay.no_data": "No replay data for death #{0} (recording was off or sampler hadn't captured frames yet).",
   "pm.replay.no_id": "No death #{0}",
   "pm.replay.no_name_match": "No recent death matches \"{0}\"",
-  "pm.replay.started": "Replaying #{0}: {1}'s death ({2}s window)",
+  "pm.replay.started": "Replaying #{0}: {1}'s death ({2}s of movement)",
   "pm.replay.killshot": "{0} killed {1} with {2}",
   "pm.replay.fired": "{0} fired {1}",
   "pm.replay.threw": "{0} threw {1}",
@@ -40,20 +40,22 @@
 
   "pm.replaystop.none": "No active replay",
   "pm.replaystop.ok": "Replay #{0} cancelled",
+  "pm.replay.ended": "Replay of {0} ended — type {1} to respawn",
+  "pm.replayevent.ended": "Replay ended — type {0} to respawn the event",
 
   "pm.replayevent.no_data": "No replay data for event #{0} (recording was off, or sampler hadn't captured frames).",
-  "pm.replayevent.started": "Replaying event #{0} — {1} member(s): {2} ({3}s window)",
+  "pm.replayevent.started": "Replaying event #{0} — {1} victim(s): {2} ({3}s of movement)",
 
-  "pm.recording.bad_arg": "usage: !pmrecording [on|off|toggle]",
-  "pm.recording.on": "recording: ON",
-  "pm.recording.off": "recording: OFF",
+  "pm.recording.bad_arg": "Usage: !pmrecording [on|off|toggle]",
+  "pm.recording.on": "Recording: ON",
+  "pm.recording.off": "Recording: OFF",
 
   "pm.fk.alive": "You're still alive — only dead players can complain",
   "pm.fk.no_death": "You haven't died recently",
   "pm.fk.cooldown": "Wait {0}s before complaining again",
-  "pm.fk.thanks": "Staff notified ({0})",
-  "pm.fk.alert_kill": "⚠ freekill complaint from {0} (killed by {1}) — {2}",
-  "pm.fk.alert_no_killer": "⚠ freekill complaint from {0} — {1}",
+  "pm.fk.thanks": "Staff notified ({0} online)",
+  "pm.fk.alert_kill": "⚠ Freekill complaint from {0} (killed by {1}) — {2}",
+  "pm.fk.alert_no_killer": "⚠ Freekill complaint from {0} — {1}",
 
-  "pm.event.alert": "⚠ {0}-kill chain just ended — {1}"
+  "pm.event.alert": "⚠ Possible freekill: {0} terrorists killed in a row\n   Review: {1}"
 }

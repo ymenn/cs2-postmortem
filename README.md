@@ -24,7 +24,7 @@ Death `#id`s are stable within a round — they're assigned monotonically at kil
 | `!sres [count\|#id\|name] [spawn\|death]` | `!pmres` | Revive last N T deaths (default 1), specific death-id (any team), or newest name match. |
 | `!sresevent [event_id] [spawn\|death]` | `!pmresevent`, `!pmre` | Revive T members of an event (default: newest T event). |
 
-Default respawn location is the captured **death position** (with team-spawn fallback when none was captured). Append `spawn` or `team` to override.
+Default respawn location is the captured **death position** (with team-spawn fallback when none was captured). Append `spawn` (or `team`) to force a team spawn instead, or `death` (or `here` / `at`) to force the death position.
 
 **T-only filter on bulk flows.** `!sres N` and `!sresevent` skip CT entries because these commands target freekill response — a CT slaying themselves as punishment shouldn't burn one of the slots, and bulk-reviving a dead CT during a T rebellion isn't usually wanted. CT entries stay in the stack for `!sres #id`, `!replay`, and `!devents` — internal CT incidents (rare, fewer CTs) are handled case-by-case via explicit id.
 
@@ -32,9 +32,11 @@ Default respawn location is the captured **death position** (with team-spawn fal
 
 | Command | Aliases | Effect |
 |---|---|---|
-| `!replay [id\|name]` | `!pmreplay`, `!pmr` | Play back one death (default: newest). Renders victim ghost (green glow) plus animated killer ghost (red glow) when killer movement was captured. |
-| `!replayevent [event_id]` | `!pmreplayevent`, `!replayev`, `!pmrev` | Play back every member of an event together (default: newest event). |
+| `!replay [id\|name]` | `!pmreplay`, `!pmr`, `!var` | Play back one death (default: newest). Renders victim ghost (green glow) plus animated killer ghost (red glow) when killer movement was captured. |
+| `!replayevent [event_id]` | `!pmreplayevent`, `!replayev`, `!pmrev`, `!varevent`, `!varev` | Play back every member of an event together (default: newest event). |
 | `!stopreplay` | `!pmreplaystop`, `!stopr`, `!pmrs` | Cancel active replay. |
+
+Replay chat lines (kill-shot, fired weapon, swung knife) are tagged with `[+X.Xs]` showing time since playback started, so admins can correlate each action with the timeline. When a replay finishes naturally, staff get a green chat line with the matching `!sres #<id>` or `!sresevent <id>` ready to copy.
 
 ### Other
 

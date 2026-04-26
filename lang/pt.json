@@ -1,10 +1,10 @@
 {
-  "pm.res.bad_count": "contagem tem de ser inteiro positivo",
-  "pm.res.bad_id": "id da morte (após #) tem de ser inteiro positivo",
-  "pm.res.bad_where": "localização tem de ser 'spawn' ou 'death' (padrão)",
+  "pm.res.bad_count": "Contagem tem de ser um inteiro positivo",
+  "pm.res.bad_id": "ID da morte (depois do #) tem de ser um inteiro positivo",
+  "pm.res.bad_where": "Localização tem de ser 'spawn' ou 'death' (padrão)",
   "pm.res.empty": "Não há mortos para ressuscitar",
-  "pm.res.partial": "Ressuscitei 0/{0} — todos vivos ou desconectados",
-  "pm.res.ok": "Ressuscitei {0}/{1}: {2}",
+  "pm.res.partial": "Ressuscitados 0/{0} — todos vivos ou desconectados",
+  "pm.res.ok": "Ressuscitados {0}/{1}: {2}",
   "pm.res.no_name_match": "Nenhuma morte recente corresponde a \"{0}\"",
 
   "pm.ago.just_now": "agora mesmo",
@@ -23,37 +23,39 @@
   "pm.events.row_one": "  #{0} ({1}) 1 morte: {2}",
   "pm.events.row_many": "  #{0} ({1}) {2} mortes em {3}s: {4}",
 
-  "pm.event.bad_id": "id do evento tem de ser inteiro positivo",
-  "pm.event.none": "Sem evento #{0}",
+  "pm.event.bad_id": "ID do evento tem de ser um inteiro positivo",
+  "pm.event.none": "Não existe o evento #{0}",
 
-  "pm.resevent.partial": "Ressuscitei 0/{0} do evento #{1} — todos vivos ou desconectados",
-  "pm.resevent.ok": "Ressuscitei {0}/{1} do evento #{2}: {3}",
+  "pm.resevent.partial": "Ressuscitados 0/{0} do evento #{1} — todos vivos ou desconectados",
+  "pm.resevent.ok": "Ressuscitados {0}/{1} do evento #{2}: {3}",
 
   "pm.replay.no_data": "Sem dados de replay para a morte #{0} (gravação desligada ou sampler ainda não tinha frames).",
-  "pm.replay.no_id": "Sem morte #{0}",
+  "pm.replay.no_id": "Não existe a morte #{0}",
   "pm.replay.no_name_match": "Nenhuma morte recente corresponde a \"{0}\"",
-  "pm.replay.started": "A reproduzir #{0}: morte de {1} (janela de {2}s)",
+  "pm.replay.started": "A reproduzir #{0}: morte de {1} ({2}s de movimento)",
   "pm.replay.killshot": "{0} matou {1} com {2}",
   "pm.replay.fired": "{0} disparou {1}",
   "pm.replay.threw": "{0} atirou {1}",
-  "pm.replay.swung_knife": "{0} esfaqueou",
+  "pm.replay.swung_knife": "{0} usou a faca",
 
   "pm.replaystop.none": "Sem replay ativo",
   "pm.replaystop.ok": "Replay #{0} cancelado",
+  "pm.replay.ended": "Replay de {0} terminou — escreve {1} para ressuscitar",
+  "pm.replayevent.ended": "Replay terminou — escreve {0} para ressuscitar o evento",
 
   "pm.replayevent.no_data": "Sem dados de replay para o evento #{0} (gravação desligada ou sampler ainda não tinha frames).",
-  "pm.replayevent.started": "A reproduzir evento #{0} — {1} membro(s): {2} (janela de {3}s)",
+  "pm.replayevent.started": "A reproduzir evento #{0} — {1} vítima(s): {2} ({3}s de movimento)",
 
-  "pm.recording.bad_arg": "uso: !pmrecording [on|off|toggle]",
-  "pm.recording.on": "gravação: ON",
-  "pm.recording.off": "gravação: OFF",
+  "pm.recording.bad_arg": "Uso: !pmrecording [on|off|toggle]",
+  "pm.recording.on": "Gravação: ON",
+  "pm.recording.off": "Gravação: OFF",
 
   "pm.fk.alive": "Ainda estás vivo — só os mortos podem reclamar",
   "pm.fk.no_death": "Não morreste recentemente",
   "pm.fk.cooldown": "Espera {0}s antes de reclamar outra vez",
-  "pm.fk.thanks": "Staff notificado ({0})",
-  "pm.fk.alert_kill": "⚠ queixa de freekill de {0} (morto por {1}) — {2}",
-  "pm.fk.alert_no_killer": "⚠ queixa de freekill de {0} — {1}",
+  "pm.fk.thanks": "Staff notificado ({0} online)",
+  "pm.fk.alert_kill": "⚠ Queixa de freekill de {0} (morto por {1}) — {2}",
+  "pm.fk.alert_no_killer": "⚠ Queixa de freekill de {0} — {1}",
 
-  "pm.event.alert": "⚠ chain de {0} mortes acabou — {1}"
+  "pm.event.alert": "⚠ Possível freekill: {0} terroristas mortos em sequência\n   Revê: {1}"
 }

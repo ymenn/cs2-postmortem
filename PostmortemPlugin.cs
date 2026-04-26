@@ -124,6 +124,11 @@ public partial class PostmortemPlugin : BasePlugin
     private MovementSampler _sampler = default!;
     private EventRecorder _recorder = default!;
     private MovementReplay? _activeReplay;
+    // Pair of fields the playback-end hook reads to print the right respawn
+    // command (`!sres #<id>` for single, `!sresevent <id>` for event). Cleared
+    // in StopActiveReplay so leftover state doesn't bleed into the next replay.
+    private bool _activeReplayIsEvent;
+    private DeathEntry? _activeReplaySingleEntry;
     private float _roundStartRealtime;
 
     // Chain-end staff alert. We don't alert on each death because deaths can
@@ -416,7 +421,38 @@ public partial class PostmortemPlugin : BasePlugin
         }
         if (!_activeReplay.IsPlaying)
         {
+            AnnounceReplayEnded();
             StopActiveReplay(reason: "playback_end");
+        }
+    }
+
+    // Tell admins the replay is done and what to type to revive. Only fires
+    // on natural end (playback_end) — manual_stop / round_start / consumed /
+    // unload paths skip this so we don't spam staff with stale prompts.
+    private void AnnounceReplayEnded()
+    {
+        if (_activeReplay is null) return;
+        string localized;
+        if (_activeReplayIsEvent)
+        {
+            var cmd = $"{ChatColors.LightYellow}!sresevent {_activeReplay.EventId}{ChatColors.Default}";
+            localized = Localizer["pm.replayevent.ended", cmd];
+        }
+        else if (_activeReplaySingleEntry is { } entry)
+        {
+            var cmd = $"{ChatColors.LightYellow}!sres #{entry.Id}{ChatColors.Default}";
+            localized = Localizer["pm.replay.ended", entry.VictimName, cmd];
+        }
+        else
+        {
+            return;
+        }
+        var line = $"{ChatPrefixColored} {ChatColors.Green}{localized}{ChatColors.Default}";
+        foreach (var p in Utilities.GetPlayers())
+        {
+            if (p is null || !p.IsValid || p.IsBot) continue;
+            if (!AdminManager.PlayerHasPermissions(p, "@css/generic")) continue;
+            p.PrintToChat(line);
         }
     }
 
@@ -431,6 +467,8 @@ public partial class PostmortemPlugin : BasePlugin
         );
         _activeReplay.Stop();
         _activeReplay = null;
+        _activeReplayIsEvent = false;
+        _activeReplaySingleEntry = null;
     }
 
     // ===== Commands =====
@@ -810,6 +848,7 @@ public partial class PostmortemPlugin : BasePlugin
     )]
     [ConsoleCommand("css_pmreplay", "Alias of !replay.")]
     [ConsoleCommand("css_pmr", "Alias of !replay.")]
+    [ConsoleCommand("css_var", "Alias of !replay.")]
     [CommandHelper(
         minArgs: 0,
         usage: "[death_id|name]",
@@ -874,6 +913,8 @@ public partial class PostmortemPlugin : BasePlugin
             lingerSeconds: () => CvReplayLinger.Value,
             formatShotLine: FormatReplayShotLine
         );
+        _activeReplayIsEvent = false;
+        _activeReplaySingleEntry = entry;
         var windowSec = MaxWindowSeconds(members);
         Reply(
             caller,
@@ -892,6 +933,8 @@ public partial class PostmortemPlugin : BasePlugin
     [ConsoleCommand("css_replayev", "Alias of !replayevent.")]
     [ConsoleCommand("css_pmreplayevent", "Alias of !replayevent.")]
     [ConsoleCommand("css_pmrev", "Alias of !replayevent.")]
+    [ConsoleCommand("css_varevent", "Alias of !replayevent.")]
+    [ConsoleCommand("css_varev", "Alias of !replayevent.")]
     [CommandHelper(minArgs: 0, usage: "[event_id]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
     [RequiresPermissions("@css/generic")]
     public void OnCommandPmReplayEvent(CCSPlayerController? caller, CommandInfo info)
@@ -944,6 +987,8 @@ public partial class PostmortemPlugin : BasePlugin
             lingerSeconds: () => CvReplayLinger.Value,
             formatShotLine: FormatReplayShotLine
         );
+        _activeReplayIsEvent = true;
+        _activeReplaySingleEntry = null;
         var windowSec = MaxWindowSeconds(members);
         var victimsLabel = string.Join(", ", members.ConvertAll(m => m.VictimName));
         Reply(
@@ -1156,9 +1201,11 @@ public partial class PostmortemPlugin : BasePlugin
     }
 
     // Called from MovementReplay when the kill shot hits — localizes the chat
-    // line so replay announcements match the caller's language.
-    private string FormatReplayKillLine(string killer, string victim, string weapon) =>
-        $"{ChatPrefixColored} {Localizer["pm.replay.killshot", killer, victim, weapon]}";
+    // line so replay announcements match the caller's language. `elapsed` is
+    // seconds since replay started, prepended as a `[+X.Xs]` tag so admins
+    // reading the chat can correlate actions to playback time.
+    private string FormatReplayKillLine(float elapsed, string killer, string victim, string weapon) =>
+        $"{ChatPrefixColored} {FormatReplayTimeTag(elapsed)} {Localizer["pm.replay.killshot", killer, victim, weapon]}";
 
     // Called from MovementReplay when the T switches weapon during playback.
     // Branches by weapon-name category (melee / grenade / firearm) to pick the
@@ -1166,7 +1213,7 @@ public partial class PostmortemPlugin : BasePlugin
     // "weapon_hegrenade", "weapon_knife_karambit", etc.). Strip the "weapon_"
     // prefix for display — keeps the chat line readable without a full
     // humanisation table.
-    private string FormatReplayShotLine(string actor, string weapon)
+    private string FormatReplayShotLine(float elapsed, string actor, string weapon)
     {
         var label = weapon.StartsWith("weapon_", StringComparison.Ordinal)
             ? weapon["weapon_".Length..]
@@ -1178,8 +1225,11 @@ public partial class PostmortemPlugin : BasePlugin
             key = "pm.replay.threw";
         else
             key = "pm.replay.fired";
-        return $"{ChatPrefixColored} {Localizer[key, actor, label]}";
+        return $"{ChatPrefixColored} {FormatReplayTimeTag(elapsed)} {Localizer[key, actor, label]}";
     }
+
+    private static string FormatReplayTimeTag(float elapsed) =>
+        $"{ChatColors.Grey}[+{elapsed.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}s]{ChatColors.Default}";
 
     private static bool IsMeleeWeapon(string designerName) =>
         designerName.Contains("knife", StringComparison.Ordinal)
