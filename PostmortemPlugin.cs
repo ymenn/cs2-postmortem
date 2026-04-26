@@ -13,9 +13,10 @@ using Postmortem.Replay;
 
 namespace Postmortem;
 
-// !sres [N|#id|name] [death|spawn]  — respawn last N / death #id / newest name match
-//                                       (default 1, at death-pos when available).
-// !sresevent <id>               — respawn everyone in event #id.
+// !sres [N|#id|name] [@spawn|@death|@here] — respawn last N / death #id / newest name match
+//                                       (default 1, at death-pos when available;
+//                                       @here = in front of caller, like Admin !bring).
+// !sresevent <id> [@spawn|@death|@here] — respawn everyone in event #id.
 // !replay [id|name]             — play back individual death #id / newest name match / newest.
 // !replayevent <id>             — play back every member of event #id together.
 // !stopreplay                   — cancel active replay.
@@ -477,7 +478,7 @@ public partial class PostmortemPlugin : BasePlugin
     [ConsoleCommand("css_pmres", "Alias of !sres.")]
     [CommandHelper(
         minArgs: 0,
-        usage: "[count|#id|name] [spawn|death]",
+        usage: "[count|#id|name] [@spawn|@death|@here|@aim]",
         whoCanExecute: CommandUsage.CLIENT_AND_SERVER
     )]
     [RequiresPermissions("@css/generic")]
@@ -521,7 +522,7 @@ public partial class PostmortemPlugin : BasePlugin
                 nameNeedle = arg1;
             }
         }
-        if (!TryParseRespawnWhere(info, whereArgIndex, out var atDeath, caller))
+        if (!TryParseRespawnWhere(info, whereArgIndex, out var atDeath, out var inFrontOf, caller))
             return;
 
         IReadOnlyList<DeathEntry> popped;
@@ -580,7 +581,7 @@ public partial class PostmortemPlugin : BasePlugin
                 skipped++;
                 continue;
             }
-            RespawnAt(c, e, atDeath);
+            RespawnAt(c, e, atDeath, inFrontOf);
             names.Add(c.PlayerName ?? $"slot {e.Slot}");
         }
 
@@ -598,12 +599,12 @@ public partial class PostmortemPlugin : BasePlugin
                 Localizer["pm.res.ok", names.Count, popped.Count, string.Join(", ", names)]
             );
         Logger.LogInformation(
-            "Postmortem: pmres popped={Popped} respawned={Respawned} skipped={Skipped} requested={Req} atDeath={At}",
+            "Postmortem: pmres popped={Popped} respawned={Respawned} skipped={Skipped} requested={Req} where={Where}",
             popped.Count,
             names.Count,
             skipped,
             count,
-            atDeath
+            inFrontOf is not null ? "@here" : (atDeath ? "@death" : "@spawn")
         );
     }
 
@@ -661,7 +662,7 @@ public partial class PostmortemPlugin : BasePlugin
     [ConsoleCommand("css_pmre", "Alias of !sresevent.")]
     [CommandHelper(
         minArgs: 0,
-        usage: "[event_id] [spawn|death]",
+        usage: "[event_id] [@spawn|@death|@here|@aim]",
         whoCanExecute: CommandUsage.CLIENT_AND_SERVER
     )]
     [RequiresPermissions("@css/generic")]
@@ -689,7 +690,7 @@ public partial class PostmortemPlugin : BasePlugin
             // arg1 may carry a location keyword when no id was given.
             if (info.ArgCount >= 2) whereArgIndex = 1;
         }
-        if (!TryParseRespawnWhere(info, whereArgIndex, out var atDeath, caller))
+        if (!TryParseRespawnWhere(info, whereArgIndex, out var atDeath, out var inFrontOf, caller))
             return;
 
         // Pop only the T members of the chain. CT entries (e.g. the killer
@@ -712,7 +713,7 @@ public partial class PostmortemPlugin : BasePlugin
                 continue;
             if (c.Team != CsTeam.Terrorist && c.Team != CsTeam.CounterTerrorist)
                 continue;
-            RespawnAt(c, e, atDeath);
+            RespawnAt(c, e, atDeath, inFrontOf);
             names.Add(c.PlayerName ?? $"slot {e.Slot}");
         }
 
@@ -733,70 +734,121 @@ public partial class PostmortemPlugin : BasePlugin
                 Localizer["pm.resevent.ok", names.Count, popped.Count, id, string.Join(", ", names)]
             );
         Logger.LogInformation(
-            "Postmortem: pmresevent id={Id} popped={Popped} respawned={R} atDeath={At}",
+            "Postmortem: pmresevent id={Id} popped={Popped} respawned={R} where={Where}",
             id,
             popped.Count,
             names.Count,
-            atDeath
+            inFrontOf is not null ? "@here" : (atDeath ? "@death" : "@spawn")
         );
     }
 
     // True when `s` is one of the location keywords accepted by
-    // TryParseRespawnWhere — used by !pmres to disambiguate `!pmres death`
-    // (location-only) from `!pmres <name>` (name search).
+    // TryParseRespawnWhere — used by !pmres to disambiguate `!pmres @death`
+    // (location-only) from `!pmres <name>` (name search). All keywords are
+    // `@`-prefixed, matching Admin's @here/@aim convention.
     private static bool IsRespawnWhereKeyword(string s) => s.ToLowerInvariant() switch
     {
-        "spawn" or "team" or "death" or "here" or "at" => true,
+        "@death" or "@spawn" or "@here" or "@aim" => true,
         _ => false,
     };
 
-    // Parses the optional `spawn|death` trailing arg shared by !sres and
-    // !sresevent. Default is death-pos when available — RespawnAt falls back
-    // to team spawn automatically when DeathPosition is null. Returns true
-    // when the arg is absent or valid (atDeath set); false + error message
-    // when invalid.
+    // Parses the optional `@spawn|@death|@here|@aim` trailing arg shared by
+    // !sres and !sresevent. Default is death-pos when available — RespawnAt
+    // falls back to team spawn automatically when DeathPosition is null.
+    // `@here` mirrors Admin's !bring (80u in front of caller's facing dir)
+    // and overrides the other modes via `inFrontOf`. `@aim` is reserved for
+    // eye-trace destination but currently unavailable (same signature break
+    // as Admin's @aim). Returns true when the arg is absent or valid;
+    // false + error message when invalid or unavailable.
     private bool TryParseRespawnWhere(
         CommandInfo info,
         int argIndex,
         out bool atDeath,
+        out Vector? inFrontOf,
         CCSPlayerController? caller
     )
     {
         atDeath = true;
+        inFrontOf = null;
         if (info.ArgCount <= argIndex)
             return true;
         var arg = info.GetArg(argIndex).ToLowerInvariant();
         switch (arg)
         {
-            case "spawn":
-            case "team":
+            case "@spawn":
                 atDeath = false;
                 return true;
-            case "death":
-            case "here":
-            case "at":
+            case "@death":
                 atDeath = true;
                 return true;
+            case "@here":
+                if (caller is null || !caller.IsValid)
+                {
+                    Reply(caller, info, ChatColors.Red, Localizer["pm.res.here_no_caller"]);
+                    return false;
+                }
+                var pawn = caller.PlayerPawn?.Value;
+                if (pawn?.AbsOrigin is null || pawn.AbsRotation is null || !caller.PawnIsAlive)
+                {
+                    Reply(caller, info, ChatColors.Red, Localizer["pm.res.here_no_caller"]);
+                    return false;
+                }
+                inFrontOf = OffsetForward(pawn.AbsOrigin, pawn.AbsRotation, 80f, 5f);
+                atDeath = false;
+                return true;
+            case "@aim":
+                Reply(caller, info, ChatColors.Yellow, Localizer["pm.res.aim_unavailable"]);
+                return false;
             default:
                 Reply(caller, info, ChatColors.Red, Localizer["pm.res.bad_where"]);
                 return false;
         }
     }
 
-    // Engine-picked team spawn, or the death position if the caller asked for
-    // `death` and we have one captured. Respawn is asynchronous — the pawn is
-    // revived on the next frame, so the teleport has to defer to then too.
-    private void RespawnAt(CCSPlayerController c, DeathEntry entry, bool atDeath)
+    // Mirrors AdminPlugin's OffsetForward (80u/+5z is the !bring constant).
+    // Yaw-only — pitch/roll would tilt the destination off the floor.
+    private static Vector OffsetForward(Vector origin, QAngle yawSource, float distance, float zPad)
+    {
+        var yaw = (float)(Math.PI / 180.0) * yawSource.Y;
+        return new Vector(
+            origin.X + (float)Math.Cos(yaw) * distance,
+            origin.Y + (float)Math.Sin(yaw) * distance,
+            origin.Z + zPad
+        );
+    }
+
+    // Engine-picked team spawn, or the death position if the caller asked
+    // for `@death` and we have one captured, or in front of the admin if
+    // `@here`. Respawn is asynchronous — the pawn is revived on the next
+    // frame, so the teleport has to defer to then too. `inFrontOf` wins
+    // over death-pos when set (it's the precomputed admin offset captured
+    // at parse time, so all targets stack at the same destination).
+    private void RespawnAt(CCSPlayerController c, DeathEntry entry, bool atDeath, Vector? inFrontOf)
     {
         c.Respawn();
-        if (!atDeath || entry.DeathPosition is null)
+        Vector? pos;
+        QAngle? bodyYaw;
+        if (inFrontOf is not null)
+        {
+            pos = inFrontOf;
+            // Preserve engine spawn rotation — matches Admin !bring (target
+            // keeps own AbsRotation). Captured next frame after Respawn.
+            bodyYaw = null;
+        }
+        else if (atDeath && entry.DeathPosition is not null)
+        {
+            pos = entry.DeathPosition;
+            // Body yaw only — DeathAngles comes from EyeAngles which carries
+            // pitch (look up/down) and sometimes roll. Feeding those into
+            // pawn Teleport bends the model. Y is the heading the player was
+            // facing; that's all the body needs.
+            bodyYaw = new QAngle(0f, (entry.DeathAngles ?? QAngle.Zero).Y, 0f);
+        }
+        else
+        {
             return;
-        var pos = entry.DeathPosition;
-        // Body yaw only — DeathAngles comes from EyeAngles which carries
-        // pitch (look up/down) and sometimes roll. Feeding those into pawn
-        // Teleport bends the model. Y is the heading the player was facing;
-        // that's all the body needs.
-        var bodyYaw = new QAngle(0f, (entry.DeathAngles ?? QAngle.Zero).Y, 0f);
+        }
+
         Server.NextFrame(() =>
         {
             if (!c.IsValid)
@@ -804,7 +856,7 @@ public partial class PostmortemPlugin : BasePlugin
             var pawn = c.PlayerPawn?.Value;
             if (pawn is null || !pawn.IsValid)
                 return;
-            pawn.Teleport(pos, bodyYaw, Vector.Zero);
+            pawn.Teleport(pos, bodyYaw ?? pawn.AbsRotation ?? QAngle.Zero, Vector.Zero);
         });
     }
 

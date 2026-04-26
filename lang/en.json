@@ -1,7 +1,9 @@
 {
   "pm.res.bad_count": "Count must be a positive integer",
   "pm.res.bad_id": "Death id (after #) must be a positive integer",
-  "pm.res.bad_where": "Location must be 'spawn' or 'death' (default)",
+  "pm.res.bad_where": "Location must be @spawn, @death (default), or @here",
+  "pm.res.here_no_caller": "@here needs a live caller — run from in-game while alive",
+  "pm.res.aim_unavailable": "@aim is currently unavailable (eye-trace signature broken)",
   "pm.res.empty": "No dead players to respawn",
   "pm.res.partial": "Respawned 0/{0} — all alive or disconnected",
   "pm.res.ok": "Respawned {0}/{1}: {2}",

@@ -1,7 +1,9 @@
 {
   "pm.res.bad_count": "Contagem tem de ser um inteiro positivo",
   "pm.res.bad_id": "ID da morte (depois do #) tem de ser um inteiro positivo",
-  "pm.res.bad_where": "Localização tem de ser 'spawn' ou 'death' (padrão)",
+  "pm.res.bad_where": "Localização tem de ser @spawn, @death (padrão) ou @here",
+  "pm.res.here_no_caller": "@here precisa de um chamador vivo — usa em-jogo enquanto vivo",
+  "pm.res.aim_unavailable": "@aim está indisponível (eye-trace partido)",
   "pm.res.empty": "Não há mortos para ressuscitar",
   "pm.res.partial": "Ressuscitados 0/{0} — todos vivos ou desconectados",
   "pm.res.ok": "Ressuscitados {0}/{1}: {2}",

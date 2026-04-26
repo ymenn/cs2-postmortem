@@ -22,17 +22,23 @@ No external dependencies beyond CSSharp itself.
 
 ## 2. Respawn — `!sres`, `!sresevent`
 
-`!sres [count|#id|name] [spawn|death]` — one command, four shapes:
+`!sres [count|#id|name] [@spawn|@death|@here|@aim]` — one command, four shapes:
 - no arg → newest 1 (T-only)
 - numeric `N` → last N **T** deaths from the stack top (count form skips CT entries via `PopLastNTerrorist`)
 - `#N` → specific stable id (any team)
 - bareword → newest victim-name substring match (any team)
 
-`!sresevent [event_id] [spawn|death]` — revive **T members** of a chain. Default = newest **T** event (`NewestTerroristDeathId` skips a trailing CT self-slay). `event_id` is any death-id within the chain; `DeathStack.PopGroupTerroristContainingId` walks the chain bounds via the `pm_group_gap_seconds` rule and pops only T-team entries — CT entries in the same chain remain in the stack.
+`!sresevent [event_id] [@spawn|@death|@here|@aim]` — revive **T members** of a chain. Default = newest **T** event (`NewestTerroristDeathId` skips a trailing CT self-slay). `event_id` is any death-id within the chain; `DeathStack.PopGroupTerroristContainingId` walks the chain bounds via the `pm_group_gap_seconds` rule and pops only T-team entries — CT entries in the same chain remain in the stack.
 
 **T-only filter on bulk flows.** `!sres N` and `!sresevent` are freekill-response tools: a CT slaying themselves as punishment shouldn't burn one of the N slots, and bulk-reviving a CT during a T rebellion isn't usually intended. Internal CT incidents are rare (fewer CTs) and handled case-by-case via `!sres #id`. Browse + replay paths (`!deaths`, `!devents`, `!replay`, `!replayevent`) ignore the team filter so CT entries stay fully inspectable.
 
-**Default location: death position**, with team-spawn fallback when no position was captured (rare disconnect-race case). Override with trailing `spawn` / `team`. Respawn defers a frame so the engine has time to revive the pawn before teleport.
+**Default location: death position**, with team-spawn fallback when no position was captured (rare disconnect-race case). Override with trailing keyword:
+- `@spawn` → engine team spawn
+- `@death` → captured death position (default)
+- `@here` → 80u in front of the caller's facing direction (mirrors Admin `!bring`; targets stack at the same point if many). Requires a live caller — fails if run from server console or while dead.
+- `@aim` → reserved for eye-trace destination; currently unavailable (same CSSharp signature break as Admin's `@aim`).
+
+Respawn defers a frame so the engine has time to revive the pawn before teleport.
 
 **Skips silently:** disconnected, already alive, on team Spectator/None. Reports `Respawned X/Y: …` or `Respawned 0/Y — all alive or disconnected`.
 

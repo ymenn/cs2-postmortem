@@ -21,10 +21,15 @@ Death `#id`s are stable within a round — they're assigned monotonically at kil
 
 | Command | Aliases | Effect |
 |---|---|---|
-| `!sres [count\|#id\|name] [spawn\|death]` | `!pmres` | Revive last N T deaths (default 1), specific death-id (any team), or newest name match. |
-| `!sresevent [event_id] [spawn\|death]` | `!sresev`, `!pmresevent`, `!pmre` | Revive T members of an event (default: newest T event). |
+| `!sres [count\|#id\|name] [@spawn\|@death\|@here\|@aim]` | `!pmres` | Revive last N T deaths (default 1), specific death-id (any team), or newest name match. |
+| `!sresevent [event_id] [@spawn\|@death\|@here\|@aim]` | `!sresev`, `!pmresevent`, `!pmre` | Revive T members of an event (default: newest T event). |
 
-Default respawn location is the captured **death position** (with team-spawn fallback when none was captured). Append `spawn` (or `team`) to force a team spawn instead, or `death` (or `here` / `at`) to force the death position.
+Default respawn location is the captured **death position** (with team-spawn fallback when none was captured). Trailing keyword overrides:
+
+- `@spawn` — engine team spawn.
+- `@death` — captured death position (the default).
+- `@here` — 80u in front of the caller's facing direction (like Admin `!bring`). Requires a live caller in-game. When reviving multiple players, they all land at the same spot.
+- `@aim` — reserved for eye-trace destination; currently unavailable (same CSSharp signature break as Admin `@aim`).
 
 **T-only filter on bulk flows.** `!sres N` and `!sresevent` skip CT entries because these commands target freekill response — a CT slaying themselves as punishment shouldn't burn one of the slots, and bulk-reviving a dead CT during a T rebellion isn't usually wanted. CT entries stay in the stack for `!sres #id`, `!replay`, and `!devents` — internal CT incidents (rare, fewer CTs) are handled case-by-case via explicit id.
 
