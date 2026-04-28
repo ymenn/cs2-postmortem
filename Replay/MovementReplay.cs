@@ -506,11 +506,16 @@ public sealed class MovementReplay
         }
     }
 
+    // Direct native removal via Remove(). AcceptInput("Kill") queues through
+    // the I/O system for next tick; reliable for prop_dynamic but flaky for
+    // env_beam (live observation: lime LookBeams stuck in-world after replay
+    // end). ZoneAuthoringBehavior + RebelLrSession both use Remove() for the
+    // same reason.
     private static void TryKill(CEntityInstance? ent)
     {
         if (ent is null) return;
         if (!ent.IsValid) return;
-        ent.AcceptInput("Kill");
+        ent.Remove();
     }
 
     private static Vector RayEnd(Vector start, QAngle angles, float dist)
